@@ -1,0 +1,320 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@200;400;500;700;800&family=Inter:wght@300;400;600;700&display=swap');
+
+
+
+:root {
+
+  /* MONOLITH Color Palette */
+
+  --background: #f9f9f9;
+
+  --on-background: #1a1c1c;
+
+  --primary: #000000;
+
+  --on-primary: #ffffff;
+
+  --surface: #ffffff;
+
+  --surface-container: #eeeeee;
+
+  --surface-container-low: #f3f3f4;
+
+  --surface-container-high: #e8e8e8;
+
+  --text-secondary: #474747;
+
+  --accent-primary: #000000;
+
+  --accent-success: #006c49;
+
+  --accent-danger: #ba1a1a;
+
+  --glass-border: rgba(0, 0, 0, 0.05);
+
+
+
+  --font-headline: 'Manrope', sans-serif;
+
+  --font-body: 'Inter', sans-serif;
+
+}
+
+
+
+* {
+
+  margin: 0;
+
+  padding: 0;
+
+  box-sizing: border-box;
+
+}
+
+
+
+body {
+
+  background-color: var(--background);
+
+  color: var(--on-background);
+
+  font-family: var(--font-body);
+
+  line-height: 1.5;
+
+  -webkit-font-smoothing: antialiased;
+
+}
+
+
+
+.font-headline {
+
+  font-family: var(--font-headline);
+
+}
+
+
+
+.page-container {
+
+  max-width: 1200px;
+
+  margin: 0 auto;
+
+  padding: 120px 24px 80px;
+
+  min-height: 100vh;
+
+}
+
+
+
+/* Typography */
+
+h1,
+h2,
+h3,
+h4 {
+
+  font-family: var(--font-headline);
+
+  font-weight: 800;
+
+  letter-spacing: -0.05em;
+
+  text-transform: uppercase;
+
+}
+
+
+
+/* Monolith Elements */
+
+.monolith-card {
+
+  background: var(--surface);
+
+  border: 1px solid var(--glass-border);
+
+  padding: 32px;
+
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+
+}
+
+
+
+.monolith-card:hover {
+
+  transform: translateY(-4px);
+
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.05);
+
+}
+
+
+
+.monolith-button {
+
+  background: var(--primary);
+
+  color: var(--on-primary);
+
+  border: none;
+
+  padding: 16px 32px;
+
+  font-family: var(--font-headline);
+
+  font-size: 11px;
+
+  font-weight: 700;
+
+  letter-spacing: 0.2em;
+
+  text-transform: uppercase;
+
+  cursor: pointer;
+
+  transition: all 0.3s ease;
+
+}
+
+
+
+.monolith-button:hover {
+
+  background: #333;
+
+}
+
+
+
+.monolith-button.secondary {
+
+  background: var(--surface-container-high);
+
+  color: var(--on-background);
+
+}
+
+
+
+.monolith-input {
+
+  width: 100%;
+
+  background: transparent;
+
+  border: none;
+
+  border-bottom: 2px solid var(--surface-container-high);
+
+  padding: 12px 0;
+
+  font-family: var(--font-body);
+
+  font-size: 16px;
+
+  transition: border-color 0.3s ease;
+
+}
+
+
+
+.monolith-input:focus {
+
+  outline: none;
+
+  border-bottom-color: var(--primary);
+
+}
+
+
+
+/* Navigation */
+
+.top-nav {
+
+  position: fixed;
+
+  top: 0;
+
+  width: 100%;
+
+  z-index: 100;
+
+  background: rgba(255, 255, 255, 0.8);
+
+  backdrop-filter: blur(20px);
+
+  border-bottom: 1px solid var(--glass-border);
+
+}
+
+
+
+.nav-content {
+
+  max-width: 1920px;
+
+  margin: 0 auto;
+
+  padding: 24px 48px;
+
+  display: flex;
+
+  justify-content: space-between;
+
+  align-items: center;
+
+}
+
+
+
+.nav-logo {
+
+  font-family: var(--font-headline);
+
+  font-weight: 900;
+
+  font-size: 24px;
+
+  letter-spacing: -0.05em;
+
+}
+
+
+
+/* Animations */
+
+@keyframes fadeIn {
+
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+}
+
+
+
+.fade-in {
+
+  animation: fadeIn 0.6s ease-out forwards;
+
+}
+
+
+
+/* Noise Texture Overlay */
+
+.noise-overlay {
+
+  position: fixed;
+
+  top: 0;
+
+  left: 0;
+
+  width: 100%;
+
+  height: 100%;
+
+  pointer-events: none;
+
+  opacity: 0.03;
+
+  z-index: 9999;
+
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+
+}
