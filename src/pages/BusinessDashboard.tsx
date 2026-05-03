@@ -8,6 +8,8 @@ import {
   query, where, onSnapshot, orderBy, limit, updateDoc, setDoc,
   serverTimestamp, increment, runTransaction
 } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { storage } from '../firebase';
 
 const BusinessDashboard = () => {
   const navigate = useNavigate();
@@ -30,6 +32,8 @@ const BusinessDashboard = () => {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedClassIds, setSelectedClassIds] = useState<string[]>([]);
   const [classStatusFilter, setClassStatusFilter] = useState<'all' | 'upcoming' | 'completed'>('all');
+  const [classPhotoFile, setClassPhotoFile] = useState<File | null>(null);
+  const [classPhotoPreview, setClassPhotoPreview] = useState<string | null>(null);
 
   // 수업 그룹화 (시리즈별 목록)
   const groupedClassesList = Array.from(classes.reduce((acc, curr) => {
@@ -73,7 +77,8 @@ const BusinessDashboard = () => {
     daySchedules: {
       0: { ...defaultSchedule }, 1: { ...defaultSchedule }, 2: { ...defaultSchedule },
       3: { ...defaultSchedule }, 4: { ...defaultSchedule }, 5: { ...defaultSchedule }, 6: { ...defaultSchedule }
-    } as Record<number, { startTime: string, endTime: string, disabledSlots: string[] }>
+    } as Record<number, { startTime: string, endTime: string, disabledSlots: string[] }>,
+    classPhotoURL: ''
   });
   const [isRegistering, setIsRegistering] = useState(false);
   const [editingClassId, setEditingClassId] = useState<string | null>(null);
@@ -114,7 +119,8 @@ const BusinessDashboard = () => {
       daySchedules: {
         0: { ...defaultSchedule }, 1: { ...defaultSchedule }, 2: { ...defaultSchedule },
         3: { ...defaultSchedule }, 4: { ...defaultSchedule }, 5: { ...defaultSchedule }, 6: { ...defaultSchedule }
-      }
+      },
+      classPhotoURL: ''
     });
   };
 
@@ -357,8 +363,19 @@ const BusinessDashboard = () => {
     if (!window.confirm(`"${newClass.className}" 수업을 총 ${totalClassesToCreate}개 일정으로 등록하시겠습니까?\n(${newClass.startDate} ~ ${newClass.endDate})`)) return;
 
     setIsRegistering(true);
-    const groupId = Date.now().toString(); // 그룹 식별자 생성
     try {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      let photoURL = '';
+      if (classPhotoFile) {
+        const fileRef = ref(storage, `classes/${user.uid}/${Date.now()}_${classPhotoFile.name}`);
+        const uploadResult = await uploadBytes(fileRef, classPhotoFile);
+        photoURL = await getDownloadURL(uploadResult.ref);
+      }
+
+      const groupId = Date.now().toString(); // 그룹 식별자 생성
+      
       // 사업자 프로필에 티켓 정책 저장 (추후 회원 승인 시 사용)
       await updateDoc(doc(db, 'users', user.uid), {
         ticketPolicy: newClass.ticketPolicy
@@ -390,13 +407,16 @@ const BusinessDashboard = () => {
             businessName: userData?.businessName || '내 업체',
             currentCapacity: 0,
             groupId, // 동일 배치 수업 그룹화
+            classPhotoURL: photoURL,
             createdAt: serverTimestamp()
           }));
         });
       });
       await Promise.all(promises);
       alert(`${totalClassesToCreate}개 수업이 성공적으로 등록되었습니다! 🎉`);
-      setNewClass({ ...newClass, className: '' });
+      setNewClass({ ...newClass, className: '', classPhotoURL: '' });
+      setClassPhotoFile(null);
+      setClassPhotoPreview(null);
     } catch { alert('수업 등록 실패'); }
     finally { setIsRegistering(false); }
   };
@@ -472,7 +492,8 @@ const BusinessDashboard = () => {
           disabledSlots: []
         }
       },
-      ticketPolicy: cls.ticketPolicy || userData?.ticketPolicy || { period: 'month', amount: 10 }
+      ticketPolicy: cls.ticketPolicy || userData?.ticketPolicy || { period: 'month', amount: 10 },
+      classPhotoURL: cls.classPhotoURL || ''
     });
     setActiveTab('classes');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -843,8 +864,12 @@ const BusinessDashboard = () => {
                 {groupedClassesList.map((group: any, idx: number) => (
                   <div key={idx} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:shadow-md transition-shadow">
                     <div className="flex items-center gap-5">
-                      <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
-                        <span className="material-symbols-outlined text-3xl">exercise</span>
+                      <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary overflow-hidden border border-slate-100 dark:border-slate-800">
+                        {group.sampleDoc?.classPhotoURL ? (
+                          <img src={group.sampleDoc.classPhotoURL} alt={group.className} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="material-symbols-outlined text-3xl">exercise</span>
+                        )}
                       </div>
                       <div>
                         <h4 className="text-lg font-bold text-slate-900 dark:text-white mb-1">{group.className}</h4>
@@ -944,6 +969,40 @@ const BusinessDashboard = () => {
                       onChange={e => setNewClass({ ...newClass, className: e.target.value })} 
                       required 
                     />
+                  </div>
+
+                  {/* 수업 사진 업로드 */}
+                  <div>
+                    <label className="text-xs text-slate-500 font-bold block mb-1.5">수업 사진</label>
+                    <div className="flex items-center gap-4">
+                      <div className="w-20 h-20 rounded-2xl bg-slate-100 dark:bg-slate-800 border-2 border-dashed border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden shrink-0">
+                        {classPhotoPreview ? (
+                          <img src={classPhotoPreview} alt="Preview" className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="material-symbols-outlined text-slate-400">add_a_photo</span>
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <label className="inline-flex items-center px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm">
+                          파일 선택
+                          <input 
+                            type="file" 
+                            accept="image/*" 
+                            className="hidden" 
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                setClassPhotoFile(file);
+                                const reader = new FileReader();
+                                reader.onloadend = () => setClassPhotoPreview(reader.result as string);
+                                reader.readAsDataURL(file);
+                              }
+                            }}
+                          />
+                        </label>
+                        <p className="text-[10px] text-slate-400 mt-1.5">수업의 분위기를 보여주는 사진을 권장합니다.</p>
+                      </div>
+                    </div>
                   </div>
 
                   {/* 수업 기간 - 수정 시에는 시작일만 노출 (전체 수정 시에는 기간 안내) */}

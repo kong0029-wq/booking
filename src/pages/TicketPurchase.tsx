@@ -17,6 +17,7 @@ const TicketPurchase = () => {
   const navigate = useNavigate();
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   
   const [businesses, setBusinesses] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
@@ -58,11 +59,6 @@ const TicketPurchase = () => {
 
   const todayStr = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD
 
-  // 수업이 있는 업체만 필터링 (오늘 이후의 수업이 존재하는 업체)
-  const activeBusinesses = businesses.filter(biz => 
-    classes.some(cls => cls.businessId === biz.id && cls.date >= todayStr)
-  );
-
   // 센터 수강 신청 처리
   const handleApplyCenter = async (biz: any) => {
     const user = auth.currentUser;
@@ -102,10 +98,37 @@ const TicketPurchase = () => {
   return (
     <div style={{ backgroundColor: 'var(--background)', minHeight: '100vh' }}>
       <nav className="top-nav">
-        <div className="nav-content">
+        <div className="nav-content" style={{ justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <ChevronLeft size={24} onClick={() => navigate('/home')} style={{ cursor: 'pointer' }} />
             <div className="nav-logo" style={{ fontSize: '20px', fontWeight: '700' }}>수강 가능 업체 리스트</div>
+          </div>
+          
+          {/* 검색창 추가 */}
+          <div style={{ position: 'relative', width: '240px' }}>
+            <input 
+              type="text" 
+              placeholder="수업 또는 센터 검색"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '10px 16px 10px 40px',
+                borderRadius: '12px',
+                border: '1px solid var(--glass-border)',
+                backgroundColor: '#f5f5f5',
+                fontSize: '14px',
+                outline: 'none'
+              }}
+            />
+            <span className="material-symbols-outlined" style={{ 
+              position: 'absolute', 
+              left: '12px', 
+              top: '50%', 
+              transform: 'translateY(-50%)',
+              fontSize: '20px',
+              color: '#999'
+            }}>search</span>
           </div>
         </div>
       </nav>
@@ -114,89 +137,131 @@ const TicketPurchase = () => {
         <section style={{ marginBottom: '80px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '48px' }}>
             <div style={{ width: '40px', height: '2px', backgroundColor: 'black' }}></div>
-            <h1 style={{ fontSize: '24px', letterSpacing: '0.1em' }}>SELECT CENTER</h1>
+            <h1 style={{ fontSize: '24px', letterSpacing: '0.1em' }}>SELECT CLASS</h1>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
-            {activeBusinesses.length > 0 ? activeBusinesses.map((biz) => {
-              const myRes = myReservations.find(r => r.businessId === biz.id);
-              const status = myRes?.status;
-              const isExpanded = selectedBizId === biz.id;
+            {(() => {
+              // 수업명과 사업자 ID를 기준으로 그룹화하여 고유한 수업 유형 생성
+              const groupedClasses = Array.from(classes.reduce((acc, curr) => {
+                const key = `${curr.className}-${curr.businessId}`;
+                if (!acc.has(key)) {
+                  const biz = businesses.find(b => b.id === curr.businessId);
+                  if (biz) {
+                    acc.set(key, {
+                      className: curr.className || '기본 수업',
+                      businessId: curr.businessId,
+                      businessName: biz.businessName || '이름 없는 센터',
+                      businessDescription: biz.businessDescription || biz.about || '센터 설명이 준비 중입니다.',
+                      id: curr.id, // 그룹을 대표하는 샘플 ID
+                      classPhotoURL: curr.classPhotoURL,
+                      bizData: biz
+                    });
+                  }
+                }
+                return acc;
+              }, new Map()).values())
+              // 검색어 필터링 추가
+              .filter((item: any) => {
+                const lowerSearch = searchTerm.toLowerCase();
+                return item.className.toLowerCase().includes(lowerSearch) || 
+                       item.businessName.toLowerCase().includes(lowerSearch);
+              });
 
-              return (
-                <div key={biz.id} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {/* 업체명 카드 */}
-                  <motion.div
-                    onClick={() => setSelectedBizId(isExpanded ? null : biz.id)}
-                    style={{ 
-                      padding: '32px', 
-                      backgroundColor: 'white', 
-                      border: '1px solid var(--glass-border)',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      boxShadow: isExpanded ? '0 10px 30px rgba(0,0,0,0.05)' : 'none'
-                    }}
-                    className="monolith-card"
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-                      <div style={{ width: '48px', height: '48px', backgroundColor: '#f5f5f5', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <Store size={24} color="black" />
-                      </div>
-                      <div>
-                        <h2 style={{ fontSize: '24px', margin: 0, fontWeight: 800 }}>{biz.businessName || '이름 없는 센터'}</h2>
-                        <p style={{ fontSize: '12px', color: '#999', marginTop: '4px' }}>{biz.businessDescription || biz.about || biz.address || '센터 설명이 준비 중입니다.'}</p>
-                      </div>
-                    </div>
-                    <ChevronLeft size={24} style={{ transform: isExpanded ? 'rotate(-90deg)' : 'rotate(180deg)', transition: 'transform 0.3s ease' }} />
-                  </motion.div>
+              return groupedClasses.length > 0 ? groupedClasses.map((item: any) => {
+                const myRes = myReservations.find(r => r.businessId === item.businessId);
+                const status = myRes?.status;
+                const isExpanded = selectedBizId === `${item.className}-${item.businessId}`;
 
-                  {/* 하위 버튼 리스트 (확장 영역) */}
-                  <AnimatePresence>
-                    {isExpanded && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        style={{ overflow: 'hidden', display: 'flex', gap: '12px', padding: '10px 0 20px' }}
-                      >
-                        {status === 'PENDING' ? (
-                          <button disabled className="monolith-button secondary" style={{ flex: 2, cursor: 'default', opacity: 0.7 }}>
-                            승인 대기중
-                          </button>
-                        ) : status === 'CONFIRMED' ? (
-                          <button disabled className="monolith-button" style={{ flex: 2, background: '#006c49', cursor: 'default' }}>
-                            승인 완료
-                          </button>
-                        ) : (
-                          <button 
-                            onClick={() => handleApplyCenter(biz)}
-                            disabled={loadingId === biz.id}
-                            className="monolith-button"
-                            style={{ flex: 2 }}
-                          >
-                            {loadingId === biz.id ? '신청 중...' : '수강 신청'}
-                          </button>
-                        )}
-                        
-                        <button 
-                          onClick={() => setSelectedBizId(null)}
-                          className="monolith-button secondary"
-                          style={{ flex: 1 }}
+                return (
+                  <div key={`${item.className}-${item.businessId}`} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {/* 수업명 중심 카드 */}
+                    <motion.div
+                      onClick={() => setSelectedBizId(isExpanded ? null : `${item.className}-${item.businessId}`)}
+                      style={{ 
+                        padding: '32px', 
+                        backgroundColor: 'white', 
+                        border: '1px solid var(--glass-border)',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        boxShadow: isExpanded ? '0 10px 30px rgba(0,0,0,0.05)' : 'none'
+                      }}
+                      className="monolith-card"
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                        <div style={{ width: '80px', height: '80px', backgroundColor: '#f8f9fa', borderRadius: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', border: '1px solid #edf2f7', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}>
+                          {item.classPhotoURL ? (
+                            <img src={item.classPhotoURL} alt={item.className} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          ) : (
+                            <div style={{ textAlign: 'center' }}>
+                              <Store size={24} color="#cbd5e0" />
+                              <p style={{ fontSize: '8px', color: '#a0aec0', margin: '2px 0 0' }}>IMAGE</p>
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <h2 style={{ fontSize: '24px', margin: 0, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {item.className}
+                          </h2>
+                          <p style={{ fontSize: '13px', color: 'var(--primary)', fontWeight: 700, marginTop: '2px' }}>
+                            {item.businessName}
+                          </p>
+                          <p style={{ fontSize: '11px', color: '#999', marginTop: '4px' }}>
+                            {item.businessDescription}
+                          </p>
+                        </div>
+                      </div>
+                      <ChevronLeft size={24} style={{ transform: isExpanded ? 'rotate(-90deg)' : 'rotate(180deg)', transition: 'transform 0.3s ease' }} />
+                    </motion.div>
+
+                    {/* 하위 버튼 리스트 (확장 영역) */}
+                    <AnimatePresence>
+                      {isExpanded && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          style={{ overflow: 'hidden', display: 'flex', gap: '12px', padding: '10px 0 20px' }}
                         >
-                          닫기
-                        </button>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                          {status === 'PENDING' ? (
+                            <button disabled className="monolith-button secondary" style={{ flex: 2, cursor: 'default', opacity: 0.7 }}>
+                              승인 대기중
+                            </button>
+                          ) : status === 'CONFIRMED' ? (
+                            <button disabled className="monolith-button" style={{ flex: 2, background: '#006c49', cursor: 'default' }}>
+                              승인 완료
+                            </button>
+                          ) : (
+                            <button 
+                              onClick={() => handleApplyCenter(item.bizData)}
+                              disabled={loadingId === item.businessId}
+                              className="monolith-button"
+                              style={{ flex: 2 }}
+                            >
+                              {loadingId === item.businessId ? '신청 중...' : '수강 신청'}
+                            </button>
+                          )}
+                          
+                          <button 
+                            onClick={() => setSelectedBizId(null)}
+                            className="monolith-button secondary"
+                            style={{ flex: 1 }}
+                          >
+                            닫기
+                          </button>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                );
+              }) : (
+                <div style={{ textAlign: 'center', padding: '100px 0', color: '#999' }}>
+                  <p>수업이 등록된 업체가 없습니다.</p>
                 </div>
               );
-            }) : (
-              <div style={{ textAlign: 'center', padding: '100px 0', color: '#999' }}>
-                <p>수업이 등록된 업체가 없습니다.</p>
-              </div>
-            )}
+            })()}
           </div>
         </section>
       </main>

@@ -8,6 +8,7 @@ import {
   where,
   onSnapshot,
   doc,
+  addDoc,
   runTransaction,
   serverTimestamp,
   increment
@@ -30,6 +31,8 @@ const Reservation = () => {
   const [allClassNames, setAllClassNames] = useState<string>('');
   const [viewMonth, setViewMonth] = useState(new Date());
 
+  const [monthClasses, setMonthClasses] = useState<any[]>([]); // 한 달치 수업 데이터
+
   // 1. 현재 달력 데이터 생성 (동적 생성)
   const { calendarDays, currentMonthText } = useMemo(() => {
     const year = viewMonth.getFullYear();
@@ -46,13 +49,17 @@ const Reservation = () => {
       const holidayName = getHolidayName(dateStr);
       const isSunday = new Date(year, month, i).getDay() === 0;
       const isToday = dateStr === today;
-      days.push({ day: i, date: dateStr, holidayName, isSunday, isToday });
+      
+      // 해당 날짜에 수업이 있는지 확인
+      const hasClasses = monthClasses.some(c => c.date === dateStr);
+      
+      days.push({ day: i, date: dateStr, holidayName, isSunday, isToday, hasClasses });
     }
     return {
       calendarDays: days,
       currentMonthText: `${year}.${month + 1}`
     };
-  }, [viewMonth]);
+  }, [viewMonth, monthClasses]);
 
   const handlePrevMonth = () => setViewMonth(new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1));
   const handleNextMonth = () => setViewMonth(new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1));
@@ -62,6 +69,7 @@ const Reservation = () => {
   useEffect(() => {
     let unsubUser: (() => void) | undefined;
     let unsubClasses: (() => void) | undefined;
+    let unsubMonthClasses: (() => void) | undefined;
     let unsubBiz: (() => void) | undefined;
     let unsubMember: (() => void) | undefined;
 
@@ -96,6 +104,19 @@ const Reservation = () => {
             const names = Array.from(new Set(snap.docs.map(d => d.data().className))).filter(Boolean);
             setAllClassNames(names.join(', '));
           });
+
+          // [한 달치 수업 데이터 실시간 구독 - 달력 표시용]
+          const firstDate = `${viewMonth.getFullYear()}-${String(viewMonth.getMonth() + 1).padStart(2, '0')}-01`;
+          const lastDate = `${viewMonth.getFullYear()}-${String(viewMonth.getMonth() + 1).padStart(2, '0')}-31`;
+          const qMonth = query(
+            collection(db, 'classes'), 
+            where('businessId', '==', businessId),
+            where('date', '>=', firstDate),
+            where('date', '<=', lastDate)
+          );
+          unsubMonthClasses = onSnapshot(qMonth, (snap) => {
+            setMonthClasses(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+          });
         }
       } else {
         navigate('/');
@@ -126,10 +147,11 @@ const Reservation = () => {
       unsubscribeAuth();
       unsubUser?.();
       unsubClasses?.();
+      unsubMonthClasses?.();
       unsubBiz?.();
       unsubMember?.();
     };
-  }, [selectedDate, businessId, navigate, searchParams]);
+  }, [selectedDate, businessId, navigate, searchParams, viewMonth]);
 
   // 오전/오후 수업 분류 로직
   const morningClasses = classes.filter(c => parseInt(c.time.split(':')[0]) < 12);
@@ -200,6 +222,98 @@ const Reservation = () => {
           createdAt: serverTimestamp()
         });
       });
+
+      // 메일 발송 요청 추가 (Trigger Email 익스텐션 연동)
+      try {
+        await addDoc(collection(db, 'mail'), {
+          to: user.email,
+          message: {
+            subject: `[예약 확정] ${selectedClass.className} 수업 예약이 완료되었습니다.`,
+            html: `
+              <div style="font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; max-width: 500px; margin: 0 auto; border: 1px solid #f0f0f0; border-radius: 24px; overflow: hidden; color: #333;">
+                <div style="background-color: #00c896; padding: 40px 20px; text-align: center;">
+                  <h1 style="color: white; margin: 0; font-size: 24px; font-weight: 800;">예약 확정 알림 🎉</h1>
+                  <p style="color: rgba(255,255,255,0.9); margin-top: 8px; font-size: 14px;">기다리시던 수업 예약이 완료되었습니다!</p>
+                </div>
+                <div style="padding: 30px; background-color: white;">
+                  <p style="font-size: 16px; margin-bottom: 24px;">안녕하세요, <strong>${userData?.name || '회원'}님</strong>!<br/>신청하신 수업의 상세 일정을 안내해 드립니다.</p>
+                  
+                  <div style="background-color: #f8f9fa; padding: 24px; border-radius: 16px; margin-bottom: 24px; border: 1px solid #edf2f7;">
+                    <p style="margin: 0 0 12px 0; display: flex; align-items: center;">
+                      <span style="color: #718096; width: 70px; display: inline-block; font-size: 13px;">수업명</span>
+                      <strong style="color: #2d3748; font-size: 15px;">${selectedClass.className}</strong>
+                    </p>
+                    <p style="margin: 0 0 12px 0; display: flex; align-items: center;">
+                      <span style="color: #718096; width: 70px; display: inline-block; font-size: 13px;">일시</span>
+                      <strong style="color: #2d3748; font-size: 15px;">${selectedClass.date} / ${selectedClass.time} ~ ${selectedClass.endTime}</strong>
+                    </p>
+                    <p style="margin: 0; display: flex; align-items: center;">
+                      <span style="color: #718096; width: 70px; display: inline-block; font-size: 13px;">장소</span>
+                      <strong style="color: #2d3748; font-size: 15px;">${selectedClass.businessName}</strong>
+                    </p>
+                  </div>
+                  
+                  <p style="font-size: 14px; color: #4a5568; line-height: 1.6;">
+                    수업 시간에 맞춰 늦지 않게 도착해 주시기 바랍니다.<br/>
+                    변경 사항이나 취소 문의는 센터로 직접 연락 부탁드립니다.
+                  </p>
+                  
+                  <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #f0f0f0; text-align: center;">
+                    <p style="color: #a0aec0; font-size: 12px; margin: 0;">본 메일은 발신 전용입니다.</p>
+                  </div>
+                </div>
+              </div>
+            `
+          }
+        });
+
+        // 2. 사업자에게 알림 메일 발송
+        if (businessData?.email) {
+          await addDoc(collection(db, 'mail'), {
+            to: businessData.email,
+            message: {
+              subject: `[신규 예약 알림] ${userData?.name || '회원'}님이 ${selectedClass.className} 수업을 예약했습니다.`,
+              html: `
+                <div style="font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; max-width: 500px; margin: 0 auto; border: 1px solid #f0f0f0; border-radius: 24px; overflow: hidden; color: #333;">
+                  <div style="background-color: #4a5568; padding: 40px 20px; text-align: center;">
+                    <h1 style="color: white; margin: 0; font-size: 24px; font-weight: 800;">새로운 예약 발생 📥</h1>
+                    <p style="color: rgba(255,255,255,0.9); margin-top: 8px; font-size: 14px;">방금 새로운 수강 신청이 완료되었습니다.</p>
+                  </div>
+                  <div style="padding: 30px; background-color: white;">
+                    <p style="font-size: 16px; margin-bottom: 24px;"><strong>${businessData.businessName || '사업자'}님</strong>, 새로운 예약 정보를 확인해 주세요.</p>
+                    
+                    <div style="background-color: #f8f9fa; padding: 24px; border-radius: 16px; margin-bottom: 24px; border: 1px solid #edf2f7;">
+                      <p style="margin: 0 0 12px 0;">
+                        <span style="color: #718096; width: 80px; display: inline-block; font-size: 13px;">예약자명</span>
+                        <strong style="color: #2d3748; font-size: 15px;">${userData?.name || '회원'} (${userData?.phoneNumber || '연락처 미등록'})</strong>
+                      </p>
+                      <p style="margin: 0 0 12px 0;">
+                        <span style="color: #718096; width: 80px; display: inline-block; font-size: 13px;">수업명</span>
+                        <strong style="color: #2d3748; font-size: 15px;">${selectedClass.className}</strong>
+                      </p>
+                      <p style="margin: 0;">
+                        <span style="color: #718096; width: 80px; display: inline-block; font-size: 13px;">예약 시간</span>
+                        <strong style="color: #2d3748; font-size: 15px;">${selectedClass.date} / ${selectedClass.time} ~ ${selectedClass.endTime}</strong>
+                      </p>
+                    </div>
+                    
+                    <p style="font-size: 14px; color: #4a5568; line-height: 1.6;">
+                      현재 수업의 예약 현황은 <strong>사업자 대시보드</strong>에서 실시간으로 확인하실 수 있습니다.
+                    </p>
+                    
+                    <div style="margin-top: 40px; text-align: center;">
+                      <a href="${window.location.origin}/business-dashboard" style="display: inline-block; padding: 14px 30px; background-color: #4a5568; color: white; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 14px;">대시보드 바로가기</a>
+                    </div>
+                  </div>
+                </div>
+              `
+            }
+          });
+        }
+      } catch (e) {
+        console.error("Mail queue error:", e);
+        // 메일 발송 실패가 예약 실패로 이어지지는 않도록 처리
+      }
 
       setSuccess(true);
       setTimeout(() => navigate('/my-reservations'), 2000);
@@ -300,12 +414,21 @@ const Reservation = () => {
                     className={`h-12 w-full flex flex-col items-center justify-center text-sm rounded-lg transition-all relative border
                       ${!item ? 'text-transparent border-transparent' : 'hover:bg-slate-50'}
                       ${item?.isToday ? 'border-primary/40 bg-primary/5' : 'border-transparent'}
-                      ${item?.date === selectedDate ? 'bg-primary border-primary' : ''}
+                      ${item?.date === selectedDate ? 'bg-primary border-primary shadow-lg shadow-primary/20' : ''}
                     `}
                   >
-                    <span className={`font-bold ${item?.date === selectedDate ? 'text-white' : (item?.isToday ? 'text-primary' : (item?.holidayName || item?.isSunday ? 'text-rose-500' : 'text-slate-700'))}`}>
+                    <span className={`
+                      ${item?.date === selectedDate ? 'text-white' : (item?.isToday ? 'text-primary' : (item?.holidayName || item?.isSunday ? 'text-rose-500' : 'text-slate-700'))}
+                      ${item?.hasClasses ? 'font-black' : 'font-medium'}
+                    `}>
                       {item?.day}
                     </span>
+                    
+                    {/* 예약 가능 표시 (Dot) */}
+                    {item?.hasClasses && (
+                      <div className={`absolute bottom-1.5 w-1 h-1 rounded-full ${item?.date === selectedDate ? 'bg-white/80' : 'bg-primary animate-pulse'}`} />
+                    )}
+
                     {item?.holidayName && (
                       <span className={`text-[8px] mt-0.5 truncate w-full text-center px-1 ${item?.date === selectedDate ? 'text-white/90' : 'text-rose-500'}`}>
                         {item.holidayName}
@@ -353,9 +476,20 @@ const Reservation = () => {
               {/* Confirm Button */}
               <div className="flex flex-col gap-4">
                 {selectedClass && (
-                  <div className="bg-primary/5 p-4 rounded-xl border border-primary/20 flex justify-between items-center">
+                  <div className="bg-primary/5 p-4 rounded-xl border border-primary/20 flex gap-4 items-center">
+                    <div className="w-16 h-16 rounded-lg bg-slate-100 overflow-hidden shrink-0 border border-primary/10">
+                      {selectedClass.classPhotoURL || businessData?.businessPhotoURL ? (
+                        <img src={selectedClass.classPhotoURL || businessData.businessPhotoURL} alt="Class" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-primary/10">
+                          <span className="material-symbols-outlined text-primary/30">exercise</span>
+                        </div>
+                      )}
+                    </div>
                     <div className="text-sm">
-                      <span className="font-bold text-primary">선택됨:</span> {selectedClass.date} {selectedClass.time}
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-0.5">선택된 수업 일정</p>
+                      <span className="font-bold text-primary">{selectedClass.date} {selectedClass.time}</span>
+                      <p className="text-slate-500 text-xs mt-0.5">{selectedClass.className}</p>
                     </div>
                   </div>
                 )}

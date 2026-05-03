@@ -203,7 +203,6 @@ const Home = () => {
           <div className="flex flex-1 justify-end gap-8 items-center">
             <nav className="hidden md:flex items-center gap-9">
               <a className="text-primary text-sm font-bold transition-colors border-b-2 border-primary" href="#">홈</a>
-              <a className="text-slate-700 dark:text-slate-300 hover:text-primary dark:hover:text-primary text-sm font-medium transition-colors cursor-pointer" onClick={() => navigate('/my-reservations')}>내 예약</a>
               <a className="text-slate-700 dark:text-slate-300 hover:text-primary dark:hover:text-primary text-sm font-medium transition-colors" href="#">고객지원</a>
             </nav>
             <div className="flex items-center gap-4">
@@ -241,22 +240,7 @@ const Home = () => {
                   가입하신 센터별로 남은 수강권을 확인하고 예약해보세요.
                 </p>
               </div>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setIsEditModalOpen(true)}
-                  className="flex items-center justify-center gap-2 rounded-xl h-12 px-6 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-                >
-                  <span className="material-symbols-outlined">edit</span>
-                  <span className="truncate">정보 수정</span>
-                </button>
-                <button
-                  onClick={() => navigate('/reservation')}
-                  className="flex min-w-[140px] items-center justify-center gap-2 overflow-hidden rounded-xl h-12 px-6 bg-primary text-white text-base font-bold transition-transform active:scale-95 shadow-lg shadow-primary/20"
-                >
-                  <span className="material-symbols-outlined">add_circle</span>
-                  <span className="truncate">새 수업 예약</span>
-                </button>
-              </div>
+
             </div>
 
             {/* 메인 그리드 섹션 */}
@@ -293,19 +277,7 @@ const Home = () => {
                 </div>
               </div>
 
-              {/* 수강 신청 가능 업체 찾기 (Dashed Slot) */}
-              <div
-                onClick={() => navigate('/tickets')}
-                className="flex flex-col items-center justify-center gap-4 p-8 rounded-2xl border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-primary dark:hover:border-primary/50 hover:bg-primary/5 transition-all cursor-pointer group min-h-[250px]"
-              >
-                <div className="size-14 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
-                  <span className="material-symbols-outlined text-3xl text-slate-400 group-hover:text-primary">search</span>
-                </div>
-                <div className="text-center">
-                  <p className="text-slate-900 dark:text-slate-100 font-bold">센터 찾기 및 수강 신청</p>
-                  <p className="text-slate-500 text-sm mt-1">수강 신청이 가능한 업체 리스트를 확인하세요</p>
-                </div>
-              </div>
+
 
             </div>
 
@@ -316,12 +288,7 @@ const Home = () => {
                   <h2 className="text-2xl font-black">수업 신청</h2>
                   <p className="text-slate-500 text-sm mt-1">내가 가입한 센터의 수업들을 확인하고 예약해보세요.</p>
                 </div>
-                <button 
-                  onClick={() => navigate('/tickets')}
-                  className="text-primary text-sm font-bold flex items-center gap-1 hover:underline"
-                >
-                  센터 추가하기 <span className="material-symbols-outlined text-sm">add_circle</span>
-                </button>
+
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -347,8 +314,8 @@ const Home = () => {
                           className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm hover:shadow-xl transition-all cursor-pointer group"
                         >
                           <div className="h-40 bg-slate-100 dark:bg-slate-800 relative overflow-hidden">
-                            {biz.businessPhotoURL ? (
-                              <img src={biz.businessPhotoURL} alt={biz.businessName} className="w-full h-full object-cover" />
+                            {biz.photoURL || biz.businessPhotoURL ? (
+                              <img src={biz.photoURL || biz.businessPhotoURL} alt={biz.businessName} className="w-full h-full object-cover" />
                             ) : (
                               <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/20 to-purple-500/20">
                                 <span className="material-symbols-outlined text-6xl text-primary/30">storefront</span>
@@ -392,6 +359,9 @@ const Home = () => {
 
                     return classNames.map((className: unknown) => {
                       const classNameStr = String(className);
+                      const sampleClass = bizClasses.find(c => c.className === classNameStr);
+                      const displayPhoto = sampleClass?.classPhotoURL || biz.photoURL || biz.businessPhotoURL;
+                      
                       return (
                         <motion.div
                           key={`${biz.id}-${classNameStr}`}
@@ -400,8 +370,8 @@ const Home = () => {
                           className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm hover:shadow-xl transition-all cursor-pointer group"
                         >
                           <div className="h-40 bg-slate-100 dark:bg-slate-800 relative overflow-hidden">
-                            {biz.businessPhotoURL ? (
-                              <img src={biz.businessPhotoURL} alt={biz.businessName} className="w-full h-full object-cover" />
+                            {displayPhoto ? (
+                              <img src={displayPhoto} alt={classNameStr} className="w-full h-full object-cover" />
                             ) : (
                               <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/20 to-purple-500/20">
                                 <span className="material-symbols-outlined text-6xl text-primary/30">storefront</span>

@@ -154,7 +154,7 @@ const MyReservations = () => {
         </div>
       </nav>
 
-      <main className="max-w-3xl mx-auto px-4 py-8">
+      <main className="max-w-6xl mx-auto px-4 py-8">
         {loading ? (
           <div className="flex justify-center py-20">
             <div className="w-8 h-8 border-4 border-primary border-t-transparent animate-spin rounded-full"></div>
@@ -164,15 +164,17 @@ const MyReservations = () => {
             {viewMode === 'calendar' ? (
               <motion.div 
                 key="calendar"
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 20 }}
-                className="space-y-6"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start"
               >
-                {/* 캘린더 헤더 */}
-                <div className="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                {/* 캘린더 영역 (좌측) */}
+                <div className="lg:col-span-7 bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm">
                   <div className="flex items-center justify-between mb-8">
-                    <h2 className="text-2xl font-black">{currentMonth.getFullYear()}년 {currentMonth.getMonth() + 1}월</h2>
+                    <h2 className="font-black" style={{ fontSize: 'clamp(1.25rem, 2.5vw, 1.5rem)' }}>
+                      {currentMonth.getFullYear()}년 {currentMonth.getMonth() + 1}월
+                    </h2>
                     <div className="flex items-center gap-2">
                       <button 
                         onClick={() => setCurrentMonth(new Date())}
@@ -193,7 +195,10 @@ const MyReservations = () => {
 
                   <div className="grid grid-cols-7 gap-2">
                     {['일', '월', '화', '수', '목', '금', '토'].map((d, i) => (
-                      <div key={d} className={`text-center text-[10px] font-bold uppercase tracking-widest mb-4 ${i === 0 ? 'text-rose-500' : i === 6 ? 'text-blue-500' : 'text-slate-400'}`}>
+                      <div key={d} 
+                        className={`text-center font-bold uppercase tracking-widest mb-4 ${i === 0 ? 'text-rose-500' : i === 6 ? 'text-blue-500' : 'text-slate-400'}`}
+                        style={{ fontSize: 'clamp(0.6rem, 1vw, 0.75rem)' }}
+                      >
                         {d}
                       </div>
                     ))}
@@ -212,23 +217,29 @@ const MyReservations = () => {
                       >
                         {d && (
                           <>
-                            <span className={`text-sm font-bold mb-1 ${d.isToday ? 'text-primary' : (d.holidayName || d.isSunday ? 'text-rose-500' : d.count > 0 ? 'text-slate-900 dark:text-white' : 'text-slate-400 dark:text-slate-600')}`}>
+                            <span 
+                              className={`font-bold mb-1 ${d.isToday ? 'text-primary' : (d.holidayName || d.isSunday ? 'text-rose-500' : d.count > 0 ? 'text-slate-900 dark:text-white' : 'text-slate-400 dark:text-slate-600')}`}
+                              style={{ fontSize: 'clamp(0.75rem, 1.2vw, 0.875rem)' }}
+                            >
                               {d.day}
                             </span>
                             {d.isToday && <div className="absolute top-1 right-1 w-1.5 h-1.5 bg-primary rounded-full"></div>}
                             {d.holidayName && (
-                              <span className="text-[7px] text-rose-500 mb-1 truncate w-full text-center px-1 font-medium">
+                              <span className="text-rose-500 mb-1 truncate w-full text-center px-1 font-medium" style={{ fontSize: 'clamp(0.4rem, 0.8vw, 0.5rem)' }}>
                                 {d.holidayName}
                               </span>
                             )}
                             {d.count > 0 && (
                               <div className="w-full px-1 flex flex-col gap-0.5 items-center mt-auto pb-1.5">
                                 {d.resItems.slice(0, 2).map((r: any, idx: number) => (
-                                  <div key={idx} className="bg-primary text-white text-[7px] font-black py-0.5 px-1 rounded-md w-full truncate text-center leading-tight shadow-sm shadow-primary/20">
-                                    {r.classTime || r.time}
+                                  <div key={idx} 
+                                    className="bg-primary text-white font-black py-0.5 px-1 rounded-md w-full truncate text-center leading-tight shadow-sm shadow-primary/20"
+                                    style={{ fontSize: 'clamp(0.4rem, 0.8vw, 0.55rem)' }}
+                                  >
+                                    {r.classTime || r.time} {r.className}
                                   </div>
                                 ))}
-                                {d.count > 2 && <div className="text-[8px] text-primary font-black leading-none mt-0.5">+{d.count - 2}</div>}
+                                {d.count > 2 && <div className="text-primary font-black leading-none mt-0.5" style={{ fontSize: 'clamp(0.5rem, 0.9vw, 0.6rem)' }}>+{d.count - 2}</div>}
                               </div>
                             )}
                           </>
@@ -238,25 +249,31 @@ const MyReservations = () => {
                   </div>
                 </div>
 
-                {/* 선택 월의 예약 요약 리스트 */}
-                <div className="space-y-4 mt-8">
-                  <h3 className="text-sm font-bold text-slate-500 px-2 uppercase tracking-wider">이달의 수업 일정</h3>
-                  {reservations
-                    .filter(r => {
-                      const d = new Date(r.classDate);
-                      return d.getFullYear() === currentMonth.getFullYear() && d.getMonth() === currentMonth.getMonth();
-                    })
-                    .sort((a, b) => a.classDate.localeCompare(b.classDate) || a.classTime.localeCompare(b.classTime))
-                    .map((res) => (
-                      <ReservationCard key={res.id} res={res} onCancel={handleCancel} cancellingId={cancellingId} />
-                    ))
-                  }
-                  {reservations.filter(r => {
-                    const d = new Date(r.classDate);
-                    return d.getFullYear() === currentMonth.getFullYear() && d.getMonth() === currentMonth.getMonth();
-                  }).length === 0 && (
-                    <p className="text-center py-10 text-slate-400 text-sm">해당 월에 예약된 수업이 없습니다.</p>
-                  )}
+                {/* 요약 리스트 영역 (우측) */}
+                <div className="lg:col-span-5 space-y-4 h-full">
+                  <div className="bg-slate-50/50 dark:bg-slate-800/30 p-4 rounded-3xl border border-slate-100 dark:border-slate-800">
+                    <h3 className="text-sm font-bold text-slate-500 px-2 uppercase tracking-wider mb-4 flex items-center gap-2">
+                      <List size={16} /> 이달의 수업 일정
+                    </h3>
+                    <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+                      {reservations
+                        .filter(r => {
+                          const d = new Date(r.classDate);
+                          return d.getFullYear() === currentMonth.getFullYear() && d.getMonth() === currentMonth.getMonth();
+                        })
+                        .sort((a, b) => a.classDate.localeCompare(b.classDate) || a.classTime.localeCompare(b.classTime))
+                        .map((res) => (
+                          <ReservationCard key={res.id} res={res} onCancel={handleCancel} cancellingId={cancellingId} />
+                        ))
+                      }
+                      {reservations.filter(r => {
+                        const d = new Date(r.classDate);
+                        return d.getFullYear() === currentMonth.getFullYear() && d.getMonth() === currentMonth.getMonth();
+                      }).length === 0 && (
+                        <p className="text-center py-20 text-slate-400 text-sm italic">해당 월에 예약된 수업이 없습니다.</p>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </motion.div>
             ) : (
@@ -374,18 +391,23 @@ const ReservationCard = ({ res, onCancel, cancellingId }: { res: any, onCancel: 
   >
     <div className="flex gap-4 items-start md:items-center">
       <div className="bg-primary/10 text-primary w-14 h-14 rounded-xl flex flex-col items-center justify-center shrink-0">
-        <span className="text-[10px] font-bold">{res.classDate?.split('-')[1]}월</span>
-        <span className="text-lg font-black leading-none">{res.classDate?.split('-')[2]}</span>
+        <span className="font-bold" style={{ fontSize: 'clamp(0.55rem, 0.8vw, 0.65rem)' }}>{res.classDate?.split('-')[1]}월</span>
+        <span className="font-black leading-none" style={{ fontSize: 'clamp(1rem, 1.5vw, 1.25rem)' }}>{res.classDate?.split('-')[2]}</span>
       </div>
       <div>
         <div className="flex items-center gap-2 mb-1.5">
-          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full text-white ${res.status === 'CONFIRMED' ? 'bg-emerald-500' : res.status === 'PENDING' ? 'bg-amber-500' : 'bg-rose-500'}`}>
+          <span 
+            className={`font-bold px-2 py-0.5 rounded-full text-white ${res.status === 'CONFIRMED' ? 'bg-emerald-500' : res.status === 'PENDING' ? 'bg-amber-500' : 'bg-rose-500'}`}
+            style={{ fontSize: 'clamp(0.55rem, 0.8vw, 0.65rem)' }}
+          >
             {res.status === 'CONFIRMED' ? '예약 확정' : res.status === 'PENDING' ? '승인 대기' : '거절됨'}
           </span>
-          <span className="text-sm font-bold text-slate-500">{res.time || res.classTime}</span>
+          <span className="font-bold text-slate-500" style={{ fontSize: 'clamp(0.75rem, 1vw, 0.875rem)' }}>{res.time || res.classTime}</span>
         </div>
-        <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100 mb-1">{res.className || '수업'}</h3>
-        <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
+        <h3 className="font-bold text-slate-800 dark:text-slate-100 mb-1" style={{ fontSize: 'clamp(1rem, 1.5vw, 1.125rem)' }}>
+          {res.className || '수업'}
+        </h3>
+        <div className="flex items-center gap-3 font-medium text-slate-500" style={{ fontSize: 'clamp(0.65rem, 0.9vw, 0.75rem)' }}>
           <span className="flex items-center gap-1"><MapPin size={12} /> {res.businessName || '예약 센터'}</span>
           <span className="flex items-center gap-1"><Clock size={12} /> {res.classDuration || 60}분</span>
         </div>
@@ -396,7 +418,8 @@ const ReservationCard = ({ res, onCancel, cancellingId }: { res: any, onCancel: 
       <button
         onClick={() => onCancel(res)}
         disabled={cancellingId === res.id}
-        className="px-4 py-2 bg-rose-50 dark:bg-rose-900/20 hover:bg-rose-100 dark:hover:bg-rose-900/40 text-rose-600 dark:text-rose-400 rounded-xl text-sm font-bold transition-colors disabled:opacity-50 flex items-center gap-1.5"
+        className="px-4 py-2 bg-rose-50 dark:bg-rose-900/20 hover:bg-rose-100 dark:hover:bg-rose-900/40 text-rose-600 dark:text-rose-400 rounded-xl font-bold transition-colors disabled:opacity-50 flex items-center gap-1.5"
+        style={{ fontSize: 'clamp(0.75rem, 1vw, 0.875rem)' }}
       >
         <Trash2 size={16} />
         {cancellingId === res.id ? '취소 중...' : '예약 취소'}
