@@ -25,9 +25,17 @@ const Login = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleUserToRegister, setGoogleUserToRegister] = useState<any>(null);
+  const [rememberEmail, setRememberEmail] = useState(false);
 
   // 리다이렉트 결과 처리
   useEffect(() => {
+    // 저장된 이메일 불러오기
+    const savedEmail = localStorage.getItem('remembered_email');
+    if (savedEmail) {
+      setEmail(savedEmail);
+      setRememberEmail(true);
+    }
+
     const checkRedirect = async () => {
       try {
         const result = await getRedirectResult(auth);
@@ -171,6 +179,13 @@ const Login = () => {
     setLoading(true);
     try {
       if (isLogin) {
+        // 이메일 저장 처리
+        if (rememberEmail) {
+          localStorage.setItem('remembered_email', email);
+        } else {
+          localStorage.removeItem('remembered_email');
+        }
+
         // 로그인
         const userCredential = await signInWithEmailAndPassword(auth, email, password);
         await recordLoginActivity(userCredential.user.uid, 'email');
@@ -416,6 +431,24 @@ const Login = () => {
                   />
                 </div>
               </div>
+
+              {isLogin && (
+                <div className="flex items-center px-1">
+                  <label className="flex items-center gap-2 cursor-pointer group">
+                    <div className="relative">
+                      <input
+                        type="checkbox"
+                        className="peer sr-only"
+                        checked={rememberEmail}
+                        onChange={(e) => setRememberEmail(e.target.checked)}
+                      />
+                      <div className="w-5 h-5 border-2 border-slate-200 dark:border-slate-700 rounded-md peer-checked:bg-primary peer-checked:border-primary transition-all"></div>
+                      <span className="material-symbols-outlined absolute inset-0 text-white text-[16px] flex items-center justify-center opacity-0 peer-checked:opacity-100 transition-opacity">check</span>
+                    </div>
+                    <span className="text-sm font-medium text-slate-500 group-hover:text-slate-700 transition-colors">로그인 정보 저장</span>
+                  </label>
+                </div>
+              )}
 
               {error && <p className="text-rose-500 text-xs text-center font-medium">{error}</p>}
 
