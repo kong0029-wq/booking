@@ -7,6 +7,8 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, addDoc, collection, increment, serverTimestamp } from 'firebase/firestore';
@@ -22,6 +24,77 @@ const Login = () => {
   const [selectedRole, setSelectedRole] = useState<UserRole>('USER');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // 리다이렉트 결과 처리
+  useEffect(() => {
+    const checkRedirect = async () => {
+      try {
+        const result = await getRedirectResult(auth);
+        if (result) {
+          setLoading(true);
+          const user = result.user;
+          // 리다이렉트 전 저장했던 상태 복구
+          const savedIsLogin = localStorage.getItem('login_isLogin') === 'true';
+          const savedRole = (localStorage.getItem('login_selectedRole') || 'USER') as UserRole;
+          
+          await processGoogleUser(user, savedIsLogin, savedRole);
+          
+          // 사용 후 정리
+          localStorage.removeItem('login_isLogin');
+          localStorage.removeItem('login_selectedRole');
+        }
+      } catch (err) {
+        console.error("Redirect error:", err);
+        setError('리다이렉트 로그인 처리 중 오류가 발생했습니다.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    checkRedirect();
+  }, []);
+
+  const processGoogleUser = async (user: any, isLoginMode: boolean, roleForNew: UserRole) => {
+    const userDocRef = doc(db, 'users', user.uid);
+    const userDocSnap = await getDoc(userDocRef);
+
+    if (!userDocSnap.exists()) {
+      // 신규 구글 로그인 → 선택된 역할로 가입
+      const userData: any = {
+        uid: user.uid,
+        email: user.email,
+        name: user.displayName || '회원',
+        role: isLoginMode ? 'USER' : roleForNew,
+        createdAt: serverTimestamp(),
+        lastLoginAt: serverTimestamp(),
+        loginCount: 1,
+        tickets: 0
+      };
+
+      if (!isLoginMode && roleForNew === 'BUSINESS') {
+        userData.businessName = '';
+        userData.businessVerified = false;
+      }
+
+      await setDoc(userDocRef, userData);
+
+      await addDoc(collection(db, 'loginLogs'), {
+        uid: user.uid,
+        loginMethod: 'google_signup',
+        loginAt: serverTimestamp(),
+        userAgent: navigator.userAgent,
+        platform: navigator.platform
+      });
+
+      if (!isLoginMode && roleForNew === 'BUSINESS') {
+        navigate('/business');
+      } else {
+        navigate('/home');
+      }
+    } else {
+      await recordLoginActivity(user.uid, 'google');
+      await routeUserBasedOnRole(user.uid);
+    }
+  };
 
   // 로그인 활동 기록 함수
   const recordLoginActivity = async (uid: string, loginMethod: string) => {
@@ -146,50 +219,23 @@ const Login = () => {
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
-      const result = await signInWithPopup(auth, provider);
-      const user = result.user;
-      const userDocRef = doc(db, 'users', user.uid);
-      const userDocSnap = await getDoc(userDocRef);
 
-      if (!userDocSnap.exists()) {
-        // 신규 구글 로그인 → 선택된 역할로 가입
-        const userData: any = {
-          uid: user.uid,
-          email: user.email,
-          name: user.displayName || '회원',
-          role: isLogin ? 'USER' : selectedRole,
-          createdAt: serverTimestamp(),
-          lastLoginAt: serverTimestamp(),
-          loginCount: 1,
-          tickets: 0
-        };
+      // 모바일 환경 체크
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
-        if (!isLogin && selectedRole === 'BUSINESS') {
-          userData.businessName = '';
-          userData.businessVerified = false;
-        }
-
-        await setDoc(userDocRef, userData);
-
-        // 신규 구글 가입도 로그인 로그 기록
-        await addDoc(collection(db, 'loginLogs'), {
-          uid: user.uid,
-          loginMethod: 'google_signup',
-          loginAt: serverTimestamp(),
-          userAgent: navigator.userAgent,
-          platform: navigator.platform
-        });
-
-        if (!isLogin && selectedRole === 'BUSINESS') {
-          navigate('/business');
-        } else {
-          navigate('/home');
-        }
+      if (isMobile) {
+        // 모바일은 리다이렉트 방식 권장 (팝업 차단 회피)
+        // 리다이렉트 후 복구할 수 있도록 현재 상태 저장
+        localStorage.setItem('login_isLogin', isLogin.toString());
+        localStorage.setItem('login_selectedRole', selectedRole);
+        await signInWithRedirect(auth, provider);
       } else {
-        await recordLoginActivity(user.uid, 'google');
-        await routeUserBasedOnRole(user.uid);
+        // 데스크톱은 기존 팝업 방식 사용
+        const result = await signInWithPopup(auth, provider);
+        await processGoogleUser(result.user, isLogin, selectedRole);
       }
     } catch (err: any) {
+      console.error("Google login error:", err);
       setError('구글 로그인에 실패했습니다.');
     } finally {
       setLoading(false);
