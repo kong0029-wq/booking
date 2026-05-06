@@ -16,8 +16,6 @@ const Landing = () => {
           </div>
           <div className="flex flex-1 justify-end gap-8 items-center">
             <nav className="hidden md:flex items-center gap-8">
-              <a className="text-slate-600 text-sm font-medium hover:text-primary transition-colors" href="#">홈</a>
-              <a className="text-slate-600 text-sm font-medium hover:text-primary transition-colors" href="#">내 예약</a>
               <button
                 onClick={() => navigate('/login')}
                 className="text-slate-600 text-sm font-medium hover:text-primary transition-colors"
@@ -25,6 +23,12 @@ const Landing = () => {
                 로그인
               </button>
             </nav>
+            <button
+              onClick={() => navigate('/login')}
+              className="md:hidden flex items-center justify-center rounded-lg bg-primary/10 text-primary px-4 py-2 text-sm font-bold"
+            >
+              로그인
+            </button>
 
           </div>
         </header>

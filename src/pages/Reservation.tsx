@@ -373,7 +373,7 @@ const Reservation = () => {
 
         {/* Content (Conditional) */}
         {!isMembershipConfirmed && isMembershipConfirmed !== null ? (
-          <div className="py-20 text-center bg-white dark:bg-slate-900 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-800 shadow-sm">
+          <div className="py-12 md:py-20 text-center bg-white dark:bg-slate-900 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-800 shadow-sm">
             <span className="material-symbols-outlined text-6xl text-slate-300 mb-4 block">lock</span>
             <h3 className="text-xl font-bold text-slate-900 dark:text-slate-100 mb-2">승인 대기 중</h3>
             <p className="text-slate-500 dark:text-slate-400 max-w-sm mx-auto px-6">

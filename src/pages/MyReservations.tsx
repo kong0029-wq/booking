@@ -289,7 +289,7 @@ const MyReservations = () => {
                     <ReservationCard key={res.id} res={res} onCancel={handleCancel} cancellingId={cancellingId} />
                   ))
                 ) : (
-                  <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-3xl border border-dashed border-slate-200 dark:border-slate-700">
+                  <div className="text-center py-12 md:py-20 bg-white dark:bg-slate-800 rounded-3xl border border-dashed border-slate-200 dark:border-slate-700">
                     <CalendarIcon size={48} className="mx-auto text-slate-300 mb-4" />
                     <h2 className="text-lg font-bold text-slate-700 dark:text-slate-200 mb-2">예약된 내역이 없습니다.</h2>
                     <p className="text-slate-500 text-sm mb-6">새로운 수업을 예약하고 일정을 관리해 보세요.</p>

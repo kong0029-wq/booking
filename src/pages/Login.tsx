@@ -53,7 +53,9 @@ const Login = () => {
       if (userDoc.exists()) {
         const role = userDoc.data().role;
 
-        if (role === 'ADMIN') {
+        if (role === 'SUPER_ADMIN') {
+          navigate('/super-admin');
+        } else if (role === 'ADMIN') {
           navigate('/admin');
         } else if (role === 'BUSINESS') {
           // ✅ 사업자 전용 대시보드로 이동

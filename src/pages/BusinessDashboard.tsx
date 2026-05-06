@@ -727,8 +727,8 @@ const BusinessDashboard = () => {
   return (
     <div className="flex min-h-screen bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display">
 
-      {/* 사이드바 */}
-      <aside className="w-64 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col fixed h-full">
+      {/* 사이드바 (데스크톱) */}
+      <aside className="hidden md:flex w-64 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex-col fixed h-full z-20">
         <div className="p-6 flex items-center gap-3">
           <div className="bg-primary rounded-lg p-2 text-white">
             <span className="material-symbols-outlined text-2xl">storefront</span>
@@ -780,15 +780,49 @@ const BusinessDashboard = () => {
       </aside>
 
       {/* 메인 */}
-      <main className="flex-1 ml-64 flex flex-col min-w-0">
-        <header className="h-16 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md flex items-center justify-between px-8 sticky top-0 z-10">
-          <h2 className="text-lg font-bold">사업자 대시보드</h2>
-          {userData?.lastLoginAt?.toDate && (
-            <span className="text-xs text-slate-400">
-              마지막 접속: {new Date(userData.lastLoginAt.toDate()).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-            </span>
-          )}
+      <main className="flex-1 md:ml-64 flex flex-col min-w-0 w-full">
+        <header className="h-16 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md flex items-center justify-between px-4 md:px-8 sticky top-0 z-10">
+          <div className="flex items-center gap-3 md:hidden">
+             <div className="bg-primary rounded-lg p-1.5 text-white">
+              <span className="material-symbols-outlined text-sm">storefront</span>
+            </div>
+            <h2 className="text-base font-bold truncate">{userData?.businessName || '내 업체'}</h2>
+          </div>
+          <h2 className="text-lg font-bold hidden md:block">사업자 대시보드</h2>
+          <div className="flex items-center gap-3">
+            {userData?.lastLoginAt?.toDate && (
+              <span className="text-xs text-slate-400 hidden sm:inline-block">
+                마지막 접속: {new Date(userData.lastLoginAt.toDate()).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              </span>
+            )}
+            <button onClick={handleLogout} className="md:hidden text-slate-400 hover:text-primary transition-colors">
+              <span className="material-symbols-outlined text-xl">logout</span>
+            </button>
+          </div>
         </header>
+
+        {/* 모바일 탭 네비게이션 */}
+        <div className="md:hidden flex overflow-x-auto border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 sticky top-16 z-10 custom-scrollbar scroll-smooth">
+          {tabs.map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`flex-shrink-0 flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+                activeTab === tab.key
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-slate-600 dark:text-slate-400'
+              }`}
+            >
+              <span className="material-symbols-outlined text-lg">{tab.icon}</span>
+              <span>{tab.label}</span>
+              {tab.key === 'approval' && stats.pendingRequests > 0 && (
+                <span className="ml-1 bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">
+                  {stats.pendingRequests}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
 
         <div className="p-8 space-y-8 overflow-y-auto">
 
@@ -928,7 +962,7 @@ const BusinessDashboard = () => {
                   </div>
                 ))}
                 {groupedClassesList.length === 0 && (
-                  <div className="bg-white dark:bg-slate-900 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 p-20 text-center">
+                  <div className="bg-white dark:bg-slate-900 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 p-10 md:p-20 text-center">
                     <span className="material-symbols-outlined text-5xl text-slate-200 mb-4">inventory_2</span>
                     <p className="text-slate-400 font-medium">등록된 수업이 없습니다.</p>
                     <button onClick={() => setActiveTab('classes')} className="mt-4 text-primary font-bold text-sm hover:underline underline-offset-4">첫 수업 등록하러 가기 →</button>

@@ -57,7 +57,7 @@ const TicketPurchase = () => {
     };
   }, []);
 
-  const todayStr = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD
+
 
   // 센터 수강 신청 처리
   const handleApplyCenter = async (biz: any) => {
@@ -98,14 +98,14 @@ const TicketPurchase = () => {
   return (
     <div style={{ backgroundColor: 'var(--background)', minHeight: '100vh' }}>
       <nav className="top-nav">
-        <div className="nav-content" style={{ justifyContent: 'space-between' }}>
+        <div className="nav-content" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <ChevronLeft size={24} onClick={() => navigate('/home')} style={{ cursor: 'pointer' }} />
-            <div className="nav-logo" style={{ fontSize: '20px', fontWeight: '700' }}>수강 가능 업체 리스트</div>
+            <div className="nav-logo" style={{ fontSize: '18px', fontWeight: '700' }}>수강 가능 업체 리스트</div>
           </div>
           
           {/* 검색창 추가 */}
-          <div style={{ position: 'relative', width: '240px' }}>
+          <div style={{ position: 'relative', width: '100%', maxWidth: '240px', flex: '1 1 auto' }}>
             <input 
               type="text" 
               placeholder="수업 또는 센터 검색"
