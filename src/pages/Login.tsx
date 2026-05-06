@@ -59,44 +59,9 @@ const Login = () => {
     const userDocSnap = await getDoc(userDocRef);
 
     if (!userDocSnap.exists()) {
-      // 신규 구글 로그인인데 로그인 화면에서 시도했거나 역할이 명확하지 않은 경우 모달 띄우기
-      if (isLoginMode) {
-        setGoogleUserToRegister(user);
-        return;
-      }
-      
-      // 회원가입 탭에서 명시적으로 역할을 선택한 채 구글 로그인을 누른 경우 (기존 로직 유지)
-      const userData: any = {
-        uid: user.uid,
-        email: user.email,
-        name: user.displayName || '회원',
-        role: roleForNew,
-        createdAt: serverTimestamp(),
-        lastLoginAt: serverTimestamp(),
-        loginCount: 1,
-        tickets: 0
-      };
-
-      if (roleForNew === 'BUSINESS') {
-        userData.businessName = '';
-        userData.businessVerified = false;
-      }
-
-      await setDoc(userDocRef, userData);
-
-      await addDoc(collection(db, 'loginLogs'), {
-        uid: user.uid,
-        loginMethod: 'google_signup',
-        loginAt: serverTimestamp(),
-        userAgent: navigator.userAgent,
-        platform: navigator.platform
-      });
-
-      if (roleForNew === 'BUSINESS') {
-        navigate('/business');
-      } else {
-        navigate('/home');
-      }
+      // 구글로 최초 로그인하는 모든 신규 사용자에게 역할 선택 모달을 띄웁니다.
+      setGoogleUserToRegister(user);
+      return;
     } else {
       await recordLoginActivity(user.uid, 'google');
       await routeUserBasedOnRole(user.uid);
