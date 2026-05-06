@@ -41,12 +41,7 @@ const Login = () => {
         const result = await getRedirectResult(auth);
         if (result) {
           setLoading(true);
-          const user = result.user;
-          // 리다이렉트 전 저장했던 상태 복구
-          const savedIsLogin = localStorage.getItem('login_isLogin') === 'true';
-          const savedRole = (localStorage.getItem('login_selectedRole') || 'USER') as UserRole;
-          
-          await processGoogleUser(user, savedIsLogin, savedRole);
+          await processGoogleUser(result.user);
           
           // 사용 후 정리
           localStorage.removeItem('login_isLogin');
@@ -62,7 +57,7 @@ const Login = () => {
     checkRedirect();
   }, []);
 
-  const processGoogleUser = async (user: any, isLoginMode: boolean, roleForNew: UserRole) => {
+  const processGoogleUser = async (user: any) => {
     const userDocRef = doc(db, 'users', user.uid);
     const userDocSnap = await getDoc(userDocRef);
 
@@ -266,7 +261,7 @@ const Login = () => {
       } else {
         // 데스크톱은 기존 팝업 방식 사용
         const result = await signInWithPopup(auth, provider);
-        await processGoogleUser(result.user, isLogin, selectedRole);
+        await processGoogleUser(result.user);
       }
     } catch (err: any) {
       console.error("Google login error:", err);

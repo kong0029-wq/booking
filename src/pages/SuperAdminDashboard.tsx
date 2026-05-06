@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../firebase';
 import { signOut } from 'firebase/auth';
@@ -15,7 +15,6 @@ const SuperAdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [userFilter, setUserFilter] = useState<string>('all');
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
@@ -277,7 +276,7 @@ const SuperAdminDashboard = () => {
     </div>
   );
 
-  const contentMap: Record<Tab, () => JSX.Element> = { dashboard: renderDashboard, users: renderUsers, classes: renderClasses, logs: renderLogs, settings: renderSettings };
+  const contentMap: Record<Tab, () => React.ReactNode> = { dashboard: renderDashboard, users: renderUsers, classes: renderClasses, logs: renderLogs, settings: renderSettings };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><div className="animate-spin rounded-full h-12 w-12 border-4 border-emerald-500 border-t-transparent"></div></div>;
 
