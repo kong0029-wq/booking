@@ -24,6 +24,7 @@ const Login = () => {
   const [selectedRole, setSelectedRole] = useState<UserRole>('USER');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleUserToRegister, setGoogleUserToRegister] = useState<any>(null);
 
   // 리다이렉트 결과 처리
   useEffect(() => {
@@ -58,19 +59,25 @@ const Login = () => {
     const userDocSnap = await getDoc(userDocRef);
 
     if (!userDocSnap.exists()) {
-      // 신규 구글 로그인 → 선택된 역할로 가입
+      // 신규 구글 로그인인데 로그인 화면에서 시도했거나 역할이 명확하지 않은 경우 모달 띄우기
+      if (isLoginMode) {
+        setGoogleUserToRegister(user);
+        return;
+      }
+      
+      // 회원가입 탭에서 명시적으로 역할을 선택한 채 구글 로그인을 누른 경우 (기존 로직 유지)
       const userData: any = {
         uid: user.uid,
         email: user.email,
         name: user.displayName || '회원',
-        role: isLoginMode ? 'USER' : roleForNew,
+        role: roleForNew,
         createdAt: serverTimestamp(),
         lastLoginAt: serverTimestamp(),
         loginCount: 1,
         tickets: 0
       };
 
-      if (!isLoginMode && roleForNew === 'BUSINESS') {
+      if (roleForNew === 'BUSINESS') {
         userData.businessName = '';
         userData.businessVerified = false;
       }
@@ -85,7 +92,7 @@ const Login = () => {
         platform: navigator.platform
       });
 
-      if (!isLoginMode && roleForNew === 'BUSINESS') {
+      if (roleForNew === 'BUSINESS') {
         navigate('/business');
       } else {
         navigate('/home');
@@ -93,6 +100,53 @@ const Login = () => {
     } else {
       await recordLoginActivity(user.uid, 'google');
       await routeUserBasedOnRole(user.uid);
+    }
+  };
+
+  // 모달에서 역할 선택 시 가입 처리
+  const handleGoogleRegisterSelectRole = async (role: UserRole) => {
+    if (!googleUserToRegister) return;
+    setLoading(true);
+    try {
+      const user = googleUserToRegister;
+      const userDocRef = doc(db, 'users', user.uid);
+      const userData: any = {
+        uid: user.uid,
+        email: user.email,
+        name: user.displayName || '회원',
+        role: role,
+        createdAt: serverTimestamp(),
+        lastLoginAt: serverTimestamp(),
+        loginCount: 1,
+        tickets: 0
+      };
+
+      if (role === 'BUSINESS') {
+        userData.businessName = '';
+        userData.businessVerified = false;
+      }
+
+      await setDoc(userDocRef, userData);
+
+      await addDoc(collection(db, 'loginLogs'), {
+        uid: user.uid,
+        loginMethod: 'google_signup',
+        loginAt: serverTimestamp(),
+        userAgent: navigator.userAgent,
+        platform: navigator.platform
+      });
+
+      setGoogleUserToRegister(null);
+      if (role === 'BUSINESS') {
+        navigate('/business');
+      } else {
+        navigate('/home');
+      }
+    } catch (err) {
+      console.error(err);
+      setError('가입 처리 중 오류가 발생했습니다.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -444,6 +498,65 @@ const Login = () => {
       <footer className="py-8 text-center text-slate-400 dark:text-slate-600 text-xs">
         © 2026 예약 시스템. All rights reserved.
       </footer>
+
+      {/* 구글 신규 가입자 역할 선택 모달 */}
+      <AnimatePresence>
+        {googleUserToRegister && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-3xl p-8 shadow-2xl border border-slate-200 dark:border-slate-800"
+            >
+              <div className="text-center mb-8">
+                <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <span className="material-symbols-outlined text-3xl text-primary">waving_hand</span>
+                </div>
+                <h3 className="text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight">환영합니다!</h3>
+                <p className="text-slate-500 dark:text-slate-400 text-sm mt-2 leading-relaxed">구글 계정으로 처음 오셨군요.<br/>어떤 용도로 서비스를 이용하실 건가요?</p>
+              </div>
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={() => handleGoogleRegisterSelectRole('USER')}
+                  className="flex items-center gap-4 w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-800 hover:bg-primary/5 hover:border-primary border-2 border-transparent transition-all group"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-white dark:bg-slate-700 shadow-sm flex items-center justify-center group-hover:bg-primary group-hover:text-white transition-colors">
+                    <span className="material-symbols-outlined text-xl">person</span>
+                  </div>
+                  <div className="text-left flex-1">
+                    <p className="font-bold text-slate-900 dark:text-slate-100">일반 사용자</p>
+                    <p className="text-xs text-slate-500">클래스 예약 및 수강</p>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleGoogleRegisterSelectRole('BUSINESS')}
+                  className="flex items-center gap-4 w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-800 hover:bg-primary/5 hover:border-primary border-2 border-transparent transition-all group"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-white dark:bg-slate-700 shadow-sm flex items-center justify-center group-hover:bg-primary group-hover:text-white transition-colors">
+                    <span className="material-symbols-outlined text-xl">storefront</span>
+                  </div>
+                  <div className="text-left flex-1">
+                    <p className="font-bold text-slate-900 dark:text-slate-100">사업자</p>
+                    <p className="text-xs text-slate-500">클래스 개설 및 회원 관리</p>
+                  </div>
+                </button>
+              </div>
+              <button
+                onClick={() => { setGoogleUserToRegister(null); auth.signOut(); }}
+                className="w-full mt-6 py-3 text-slate-400 text-sm font-medium hover:text-slate-600 transition-colors"
+              >
+                취소 (로그아웃)
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
