@@ -94,35 +94,52 @@ const Login = () => {
   const [rememberEmail, setRememberEmail] = useState(false);
   const [showWebViewWarning, setShowWebViewWarning] = useState(false);
 
-  // 리다이렉트 결과 처리
+  // 인증 상태 및 리다이렉트 결과 처리
   useEffect(() => {
-    // 저장된 이메일 불러오기
+    // 1. 저장된 이메일 불러오기
     const savedEmail = localStorage.getItem('remembered_email');
     if (savedEmail) {
       setEmail(savedEmail);
       setRememberEmail(true);
     }
 
+    // 2. 이미 로그인된 사용자인지 확인 (세션 복구용)
+    const unsubscribeAuth = auth.onAuthStateChanged(async (user) => {
+      if (user && !googleUserToRegister) {
+        // 리다이렉트 결과 처리가 진행 중이 아닐 때만 자동 이동
+        console.log("Already logged in, routing...");
+        await routeUserBasedOnRole(user.uid);
+      }
+    });
+
+    // 3. 구글 리다이렉트 결과 처리
     const checkRedirect = async () => {
       try {
+        setLoading(true);
         const result = await getRedirectResult(auth);
         if (result) {
-          setLoading(true);
+          console.log("Redirect result found:", result.user.email);
           await processGoogleUser(result.user);
           
           // 사용 후 정리
           localStorage.removeItem('login_isLogin');
           localStorage.removeItem('login_selectedRole');
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error("Redirect error:", err);
-        setError('리다이렉트 로그인 처리 중 오류가 발생했습니다.');
+        if (err.code === 'auth/account-exists-with-different-credential') {
+          setError('이미 다른 방식으로 가입된 이메일입니다.');
+        } else {
+          setError('로그인 처리 중 오류가 발생했습니다. 다시 시도해주세요.');
+        }
       } finally {
         setLoading(false);
       }
     };
+    
     checkRedirect();
-  }, []);
+    return () => unsubscribeAuth();
+  }, [googleUserToRegister]); // googleUserToRegister가 없을 때만 자동 이동하게 감시
 
   const processGoogleUser = async (user: any) => {
     const userDocRef = doc(db, 'users', user.uid);
