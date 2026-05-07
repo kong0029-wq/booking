@@ -2,9 +2,9 @@ import { useEffect, useState, useRef } from 'react';
 import type { FormEvent, ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth, db, storage } from '../firebase';
-import { signOut } from 'firebase/auth';
+import { signOut, deleteUser } from 'firebase/auth';
 import { 
-  doc, onSnapshot, updateDoc, query, collection, where
+  doc, onSnapshot, updateDoc, query, collection, where, deleteDoc, getDocs
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -28,6 +28,7 @@ const Home = () => {
   const [editExtra2, setEditExtra2] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     const unsubscribeAuth = auth.onAuthStateChanged((user) => {
@@ -175,6 +176,59 @@ const Home = () => {
       alert('업데이트 중 오류가 발생했습니다.');
     } finally {
       setIsUpdating(false);
+    }
+  };
+
+  // 회원 탈퇴 처리 (2번 확인 후 삭제)
+  const handleDeleteAccount = async () => {
+    // 1차 확인
+    const firstConfirm = window.confirm(
+      '⚠️ 정말로 탈퇴하시겠습니까?\n\n탈퇴 시 모든 개인 정보와 예약 내역이 삭제되며, 이 작업은 되돌릴 수 없습니다.'
+    );
+    if (!firstConfirm) return;
+
+    // 2차 확인
+    const secondConfirm = window.confirm(
+      '🚨 최종 확인\n\n정말 탈퇴하시겠습니까?\n이 작업은 즉시 실행되며 복구가 불가능합니다.'
+    );
+    if (!secondConfirm) return;
+
+    const user = auth.currentUser;
+    if (!user) return;
+
+    setIsDeleting(true);
+    try {
+      // 1. 해당 사용자의 예약 내역 삭제
+      const resQuery = query(collection(db, 'reservations'), where('uid', '==', user.uid));
+      const resSnap = await getDocs(resQuery);
+      const deletePromises = resSnap.docs.map(d => deleteDoc(d.ref));
+      await Promise.all(deletePromises);
+
+      // 2. 해당 사용자의 로그인 기록 삭제
+      const logQuery = query(collection(db, 'loginLogs'), where('uid', '==', user.uid));
+      const logSnap = await getDocs(logQuery);
+      const logDeletes = logSnap.docs.map(d => deleteDoc(d.ref));
+      await Promise.all(logDeletes);
+
+      // 3. Firestore 사용자 문서 삭제
+      await deleteDoc(doc(db, 'users', user.uid));
+
+      // 4. Firebase Auth 계정 삭제
+      await deleteUser(user);
+
+      alert('탈퇴가 완료되었습니다. 이용해 주셔서 감사합니다.');
+      navigate('/');
+    } catch (err: any) {
+      console.error('Account deletion error:', err);
+      if (err.code === 'auth/requires-recent-login') {
+        alert('보안을 위해 재로그인이 필요합니다.\n로그아웃 후 다시 로그인하여 탈퇴를 시도해주세요.');
+        await signOut(auth);
+        navigate('/login');
+      } else {
+        alert('탈퇴 처리 중 오류가 발생했습니다. 다시 시도해주세요.');
+      }
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -571,7 +625,7 @@ const Home = () => {
                         />
                       </div>
                     </div>
-                    <div className="pt-4">
+                    <div className="pt-4 space-y-3">
                       <button
                         type="button"
                         onClick={handleUpdateProfile}
@@ -584,6 +638,35 @@ const Home = () => {
                             <span>저장 중...</span>
                           </>
                         ) : '변경사항 저장하기'}
+                      </button>
+                    </div>
+
+                    {/* 회원 탈퇴 영역 */}
+                    <div className="mt-10 pt-6 border-t border-dashed border-slate-200 dark:border-slate-800">
+                      <div className="flex items-start gap-3 mb-4">
+                        <span className="material-symbols-outlined text-rose-400 text-lg mt-0.5">warning</span>
+                        <div>
+                          <p className="text-sm font-bold text-slate-600 dark:text-slate-400">회원 탈퇴</p>
+                          <p className="text-xs text-slate-400 mt-1 leading-relaxed">탈퇴 시 모든 개인 정보, 예약 내역, 수강권이 영구 삭제됩니다.<br/>이 작업은 되돌릴 수 없습니다.</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleDeleteAccount}
+                        disabled={isDeleting}
+                        className="w-full h-12 bg-rose-50 dark:bg-rose-900/20 text-rose-500 font-bold rounded-xl border border-rose-200 dark:border-rose-800 hover:bg-rose-100 dark:hover:bg-rose-900/40 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+                      >
+                        {isDeleting ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-rose-400 border-t-transparent animate-spin rounded-full"></div>
+                            <span>탈퇴 처리 중...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="material-symbols-outlined text-lg">person_remove</span>
+                            회원 탈퇴
+                          </>
+                        )}
                       </button>
                     </div>
                   </div>

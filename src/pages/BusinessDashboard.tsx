@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../firebase';
-import { signOut } from 'firebase/auth';
+import { signOut, deleteUser } from 'firebase/auth';
 import {
   collection, addDoc, deleteDoc, doc, getDoc, getDocs,
   query, where, onSnapshot, orderBy, limit, updateDoc, setDoc,
@@ -128,6 +128,7 @@ const BusinessDashboard = () => {
   const [editBusinessName, setEditBusinessName] = useState('');
   const [editPhoneNumber, setEditPhoneNumber] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     let unsubClasses: (() => void) | undefined;
@@ -677,6 +678,65 @@ const BusinessDashboard = () => {
       alert('업체 정보가 저장되었습니다.');
     } catch { alert('저장 실패'); }
     finally { setIsSaving(false); }
+  };
+
+  // 사업자 회원 탈퇴 처리 (2번 확인 후 삭제)
+  const handleDeleteAccount = async () => {
+    // 1차 확인
+    const firstConfirm = window.confirm(
+      '⚠️ 정말로 탈퇴하시겠습니까?\n\n탈퇴 시 모든 업체 정보, 수업 일정, 회원 예약 내역이 삭제되며,\n이 작업은 되돌릴 수 없습니다.'
+    );
+    if (!firstConfirm) return;
+
+    // 2차 확인
+    const secondConfirm = window.confirm(
+      '🚨 최종 확인\n\n정말 탈퇴하시겠습니까?\n등록된 모든 수업과 회원 데이터가 영구 삭제됩니다.\n이 작업은 즉시 실행되며 복구가 불가능합니다.'
+    );
+    if (!secondConfirm) return;
+
+    const user = auth.currentUser;
+    if (!user) return;
+
+    setIsDeleting(true);
+    try {
+      // 1. 해당 사업자의 모든 수업 삭제
+      const classQuery = query(collection(db, 'classes'), where('businessId', '==', user.uid));
+      const classSnap = await getDocs(classQuery);
+      const classDeletes = classSnap.docs.map(d => deleteDoc(d.ref));
+      await Promise.all(classDeletes);
+
+      // 2. 해당 사업자 관련 예약 내역 삭제
+      const resQuery = query(collection(db, 'reservations'), where('businessId', '==', user.uid));
+      const resSnap = await getDocs(resQuery);
+      const resDeletes = resSnap.docs.map(d => deleteDoc(d.ref));
+      await Promise.all(resDeletes);
+
+      // 3. 해당 사용자의 로그인 기록 삭제
+      const logQuery = query(collection(db, 'loginLogs'), where('uid', '==', user.uid));
+      const logSnap = await getDocs(logQuery);
+      const logDeletes = logSnap.docs.map(d => deleteDoc(d.ref));
+      await Promise.all(logDeletes);
+
+      // 4. Firestore 사용자 문서 삭제
+      await deleteDoc(doc(db, 'users', user.uid));
+
+      // 5. Firebase Auth 계정 삭제
+      await deleteUser(user);
+
+      alert('탈퇴가 완료되었습니다. 이용해 주셔서 감사합니다.');
+      navigate('/');
+    } catch (err: any) {
+      console.error('Account deletion error:', err);
+      if (err.code === 'auth/requires-recent-login') {
+        alert('보안을 위해 재로그인이 필요합니다.\n로그아웃 후 다시 로그인하여 탈퇴를 시도해주세요.');
+        await signOut(auth);
+        navigate('/login');
+      } else {
+        alert('탈퇴 처리 중 오류가 발생했습니다. 다시 시도해주세요.');
+      }
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const handleShowMemberDetails = async (member: any) => {
@@ -2226,6 +2286,35 @@ const BusinessDashboard = () => {
                       className="w-full h-14 bg-primary text-white font-bold rounded-xl shadow-lg shadow-primary/20 hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                     >
                       {isSaving ? '저장 중...' : '업체 정보 저장'}
+                    </button>
+                  </div>
+
+                  {/* 회원 탈퇴 영역 */}
+                  <div className="mt-10 pt-6 border-t border-dashed border-slate-200 dark:border-slate-800">
+                    <div className="flex items-start gap-3 mb-4">
+                      <span className="material-symbols-outlined text-rose-400 text-lg mt-0.5">warning</span>
+                      <div>
+                        <p className="text-sm font-bold text-slate-600 dark:text-slate-400">회원 탈퇴</p>
+                        <p className="text-xs text-slate-400 mt-1 leading-relaxed">탈퇴 시 모든 업체 정보, 수업 일정, 회원 예약 내역이 영구 삭제됩니다.<br/>이 작업은 되돌릴 수 없습니다.</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleDeleteAccount}
+                      disabled={isDeleting}
+                      className="w-full h-12 bg-rose-50 dark:bg-rose-900/20 text-rose-500 font-bold rounded-xl border border-rose-200 dark:border-rose-800 hover:bg-rose-100 dark:hover:bg-rose-900/40 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+                    >
+                      {isDeleting ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-rose-400 border-t-transparent animate-spin rounded-full"></div>
+                          <span>탈퇴 처리 중...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="material-symbols-outlined text-lg">person_remove</span>
+                          회원 탈퇴
+                        </>
+                      )}
                     </button>
                   </div>
                 </div>
