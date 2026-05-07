@@ -16,36 +16,42 @@ import { doc, getDoc, setDoc, addDoc, collection, increment, serverTimestamp } f
 type UserRole = 'USER' | 'BUSINESS';
 
 // WebView(인앱 브라우저) 감지 - 카카오톡, 네이버, 인스타, 페이스북 등
+// ⚠️ 일반 Chrome/Samsung Internet/Safari에서는 절대 감지되지 않도록 정밀하게 판별
 const isInAppBrowser = (): boolean => {
   const ua = navigator.userAgent || navigator.vendor || '';
-  // 주요 인앱 브라우저 패턴 감지
-  const inAppPatterns = [
-    'KAKAOTALK',    // 카카오톡
-    'NAVER',        // 네이버 앱
-    'Instagram',    // 인스타그램
-    'FBAN',         // 페이스북 앱
-    'FBAV',         // 페이스북 앱
-    'FB_IAB',       // 페이스북 인앱
-    'Twitter',      // 트위터/X
-    'Line',         // 라인
-    'wv',           // Android WebView 일반
-    'WebView',      // 일반 WebView
+
+  // 1단계: 확실한 인앱 브라우저 키워드 (대소문자 정확하게 매칭)
+  const exactInAppKeywords = [
+    'KAKAOTALK',     // 카카오톡
+    'DaumApps',      // 다음/카카오 앱
+    'NAVER(inapp',   // 네이버 앱 (정확한 패턴)
+    'Instagram',     // 인스타그램
+    'FBAN',          // 페이스북 앱
+    'FBAV',          // 페이스북 앱
+    'FB_IAB',        // 페이스북 인앱 브라우저
+    'Line/',         // 라인 앱 (슬래시 포함으로 정확히)
+    'TwitterAndroid',// 트위터/X Android
+    'Twitter for',   // 트위터/X iOS
+    'Snapchat',      // 스냅챗
+    'Whale/',        // 네이버 웨일 (앱 내장)
+    'everytimeApp',  // 에브리타임
+    'BandApp',       // 밴드 앱
   ];
 
-  // 인앱 브라우저 패턴 체크
-  if (inAppPatterns.some(pattern => ua.includes(pattern))) {
+  if (exactInAppKeywords.some(keyword => ua.includes(keyword))) {
     return true;
   }
 
-  // iOS에서 Safari가 아닌 WebView 감지
-  // Safari는 'Safari'를 포함하지만 WebView는 포함하지 않음
+  // 2단계: Android WebView 판별 ('; wv)' 패턴)
+  // Android WebView는 UA에 '; wv)' 를 포함함. Chrome은 포함하지 않음.
+  if (/; wv\)/.test(ua) && /Android/.test(ua)) {
+    return true;
+  }
+
+  // 3단계: iOS에서 Safari가 아닌 WebView 감지
+  // 일반 Safari/Chrome은 UA에 'Safari/'를 포함하지만, WebView는 포함하지 않음
   const isIOS = /iPhone|iPad|iPod/.test(ua);
-  if (isIOS && !ua.includes('Safari')) {
-    return true;
-  }
-
-  // Android WebView 추가 감지 (; wv) 패턴
-  if (/; wv\)/.test(ua)) {
+  if (isIOS && !ua.includes('Safari/') && !ua.includes('CriOS')) {
     return true;
   }
 
