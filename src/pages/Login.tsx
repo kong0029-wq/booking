@@ -15,6 +15,66 @@ import { doc, getDoc, setDoc, addDoc, collection, increment, serverTimestamp } f
 
 type UserRole = 'USER' | 'BUSINESS';
 
+// WebView(인앱 브라우저) 감지 - 카카오톡, 네이버, 인스타, 페이스북 등
+const isInAppBrowser = (): boolean => {
+  const ua = navigator.userAgent || navigator.vendor || '';
+  // 주요 인앱 브라우저 패턴 감지
+  const inAppPatterns = [
+    'KAKAOTALK',    // 카카오톡
+    'NAVER',        // 네이버 앱
+    'Instagram',    // 인스타그램
+    'FBAN',         // 페이스북 앱
+    'FBAV',         // 페이스북 앱
+    'FB_IAB',       // 페이스북 인앱
+    'Twitter',      // 트위터/X
+    'Line',         // 라인
+    'wv',           // Android WebView 일반
+    'WebView',      // 일반 WebView
+  ];
+
+  // 인앱 브라우저 패턴 체크
+  if (inAppPatterns.some(pattern => ua.includes(pattern))) {
+    return true;
+  }
+
+  // iOS에서 Safari가 아닌 WebView 감지
+  // Safari는 'Safari'를 포함하지만 WebView는 포함하지 않음
+  const isIOS = /iPhone|iPad|iPod/.test(ua);
+  if (isIOS && !ua.includes('Safari')) {
+    return true;
+  }
+
+  // Android WebView 추가 감지 (; wv) 패턴
+  if (/; wv\)/.test(ua)) {
+    return true;
+  }
+
+  return false;
+};
+
+// 모바일 환경 감지
+const isMobileDevice = (): boolean => {
+  return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+};
+
+// 현재 페이지 URL을 외부 브라우저에서 여는 함수
+const openInExternalBrowser = () => {
+  const currentUrl = window.location.href;
+  
+  // Android Intent 방식 (Chrome으로 열기)
+  if (/Android/i.test(navigator.userAgent)) {
+    const intentUrl = `intent://${currentUrl.replace(/^https?:\/\//, '')}#Intent;scheme=https;package=com.android.chrome;end`;
+    window.location.href = intentUrl;
+    // Intent 실패 시 폴백
+    setTimeout(() => {
+      window.open(currentUrl, '_system');
+    }, 500);
+  } else {
+    // iOS: 외부 브라우저 열기 시도
+    window.open(currentUrl, '_system');
+  }
+};
+
 const Login = () => {
   const navigate = useNavigate();
   const [isLogin, setIsLogin] = useState(true);
@@ -26,6 +86,7 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [googleUserToRegister, setGoogleUserToRegister] = useState<any>(null);
   const [rememberEmail, setRememberEmail] = useState(false);
+  const [showWebViewWarning, setShowWebViewWarning] = useState(false);
 
   // 리다이렉트 결과 처리
   useEffect(() => {
@@ -244,28 +305,53 @@ const Login = () => {
   // 구글 로그인 처리
   const handleGoogleLogin = async () => {
     setError('');
+
+    // 🛡️ WebView(인앱 브라우저) 감지 - Google이 차단하는 환경
+    if (isInAppBrowser()) {
+      setShowWebViewWarning(true);
+      return;
+    }
+
     setLoading(true);
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
 
-      // 모바일 환경 체크
-      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-
-      if (isMobile) {
-        // 모바일은 리다이렉트 방식 권장 (팝업 차단 회피)
-        // 리다이렉트 후 복구할 수 있도록 현재 상태 저장
+      if (isMobileDevice()) {
+        // 모바일은 항상 리다이렉트 방식 사용 (팝업 차단 + WebView 이슈 회피)
         localStorage.setItem('login_isLogin', isLogin.toString());
         localStorage.setItem('login_selectedRole', selectedRole);
         await signInWithRedirect(auth, provider);
       } else {
-        // 데스크톱은 기존 팝업 방식 사용
-        const result = await signInWithPopup(auth, provider);
-        await processGoogleUser(result.user);
+        // 데스크톱: 팝업 시도 → 실패하면 리다이렉트로 폴백
+        try {
+          const result = await signInWithPopup(auth, provider);
+          await processGoogleUser(result.user);
+        } catch (popupErr: any) {
+          console.warn('Popup failed, falling back to redirect:', popupErr.code);
+          // 팝업 차단 또는 disallowed_useragent 시 리다이렉트로 전환
+          if (
+            popupErr.code === 'auth/popup-blocked' ||
+            popupErr.code === 'auth/popup-closed-by-user' ||
+            popupErr.code === 'auth/cancelled-popup-request' ||
+            popupErr.code === 'auth/unauthorized-domain' ||
+            popupErr.message?.includes('disallowed_useragent')
+          ) {
+            localStorage.setItem('login_isLogin', isLogin.toString());
+            localStorage.setItem('login_selectedRole', selectedRole);
+            await signInWithRedirect(auth, provider);
+          } else {
+            throw popupErr;
+          }
+        }
       }
     } catch (err: any) {
       console.error("Google login error:", err);
-      setError('구글 로그인에 실패했습니다.');
+      if (err.message?.includes('disallowed_useragent')) {
+        setShowWebViewWarning(true);
+      } else {
+        setError('구글 로그인에 실패했습니다. 다시 시도해주세요.');
+      }
     } finally {
       setLoading(false);
     }
@@ -491,6 +577,88 @@ const Login = () => {
       <footer className="py-8 text-center text-slate-400 dark:text-slate-600 text-xs">
         © 2026 예약 시스템. All rights reserved.
       </footer>
+
+      {/* WebView(인앱 브라우저) 경고 모달 */}
+      <AnimatePresence>
+        {showWebViewWarning && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-3xl p-8 shadow-2xl border border-slate-200 dark:border-slate-800"
+            >
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 bg-amber-100 dark:bg-amber-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <span className="material-symbols-outlined text-3xl text-amber-500">open_in_browser</span>
+                </div>
+                <h3 className="text-xl font-black text-slate-900 dark:text-slate-100 tracking-tight">외부 브라우저에서 열어주세요</h3>
+                <p className="text-slate-500 dark:text-slate-400 text-sm mt-3 leading-relaxed">
+                  현재 인앱 브라우저에서는 Google 로그인이<br/>지원되지 않습니다.
+                </p>
+              </div>
+
+              <div className="bg-slate-50 dark:bg-slate-800 rounded-2xl p-4 mb-6">
+                <div className="flex items-start gap-3">
+                  <span className="material-symbols-outlined text-primary text-lg mt-0.5">info</span>
+                  <div className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                    <p className="font-semibold text-slate-700 dark:text-slate-300 mb-1">이렇게 해보세요:</p>
+                    <p>• 우측 상단 <strong>⋮</strong> 메뉴 → "다른 브라우저로 열기"</p>
+                    <p>• 또는 Chrome/Safari에서 직접 접속</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={openInExternalBrowser}
+                  className="w-full py-3.5 bg-primary text-white rounded-2xl font-bold text-sm hover:brightness-110 transition-all active:scale-[0.98]"
+                >
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="material-symbols-outlined text-lg">open_in_new</span>
+                    외부 브라우저로 열기
+                  </span>
+                </button>
+                <button
+                  onClick={() => {
+                    // URL 복사 기능
+                    navigator.clipboard.writeText(window.location.href).then(() => {
+                      setError('');
+                      alert('URL이 복사되었습니다! 브라우저에 붙여넣기 해주세요.');
+                    }).catch(() => {
+                      // clipboard API 실패 시 폴백
+                      const textArea = document.createElement('textarea');
+                      textArea.value = window.location.href;
+                      document.body.appendChild(textArea);
+                      textArea.select();
+                      document.execCommand('copy');
+                      document.body.removeChild(textArea);
+                      alert('URL이 복사되었습니다! 브라우저에 붙여넣기 해주세요.');
+                    });
+                  }}
+                  className="w-full py-3 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-2xl font-bold text-sm hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+                >
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="material-symbols-outlined text-lg">content_copy</span>
+                    URL 복사하기
+                  </span>
+                </button>
+                <button
+                  onClick={() => setShowWebViewWarning(false)}
+                  className="w-full mt-2 py-3 text-slate-400 text-sm font-medium hover:text-slate-600 transition-colors"
+                >
+                  닫기
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* 구글 신규 가입자 역할 선택 모달 */}
       <AnimatePresence>
