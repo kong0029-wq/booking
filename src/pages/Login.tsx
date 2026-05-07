@@ -89,33 +89,23 @@ const Login = () => {
   const [name, setName] = useState('');
   const [selectedRole, setSelectedRole] = useState<UserRole>('USER');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // 초기 로딩 true로 시작 (리다이렉트 체크 중)
   const [googleUserToRegister, setGoogleUserToRegister] = useState<any>(null);
   const [rememberEmail, setRememberEmail] = useState(false);
   const [showWebViewWarning, setShowWebViewWarning] = useState(false);
+  const [redirectChecked, setRedirectChecked] = useState(false); // 리다이렉트 처리 완료 여부
 
-  // 인증 상태 및 리다이렉트 결과 처리
+  // 1단계: 구글 리다이렉트 결과를 먼저 처리 (최우선)
   useEffect(() => {
-    // 1. 저장된 이메일 불러오기
+    // 저장된 이메일 불러오기
     const savedEmail = localStorage.getItem('remembered_email');
     if (savedEmail) {
       setEmail(savedEmail);
       setRememberEmail(true);
     }
 
-    // 2. 이미 로그인된 사용자인지 확인 (세션 복구용)
-    const unsubscribeAuth = auth.onAuthStateChanged(async (user) => {
-      if (user && !googleUserToRegister) {
-        // 리다이렉트 결과 처리가 진행 중이 아닐 때만 자동 이동
-        console.log("Already logged in, routing...");
-        await routeUserBasedOnRole(user.uid);
-      }
-    });
-
-    // 3. 구글 리다이렉트 결과 처리
     const checkRedirect = async () => {
       try {
-        setLoading(true);
         const result = await getRedirectResult(auth);
         if (result) {
           console.log("Redirect result found:", result.user.email);
@@ -124,6 +114,7 @@ const Login = () => {
           // 사용 후 정리
           localStorage.removeItem('login_isLogin');
           localStorage.removeItem('login_selectedRole');
+          return; // processGoogleUser가 이미 navigate 또는 모달을 띄웠으므로 여기서 끝
         }
       } catch (err: any) {
         console.error("Redirect error:", err);
@@ -133,13 +124,41 @@ const Login = () => {
           setError('로그인 처리 중 오류가 발생했습니다. 다시 시도해주세요.');
         }
       } finally {
+        setRedirectChecked(true); // 리다이렉트 처리 완료 표시
         setLoading(false);
       }
     };
     
     checkRedirect();
+  }, []);
+
+  // 2단계: 리다이렉트 처리가 끝난 후에만 onAuthStateChanged로 기존 세션 확인
+  useEffect(() => {
+    // 리다이렉트 체크가 아직 안 끝났으면 대기
+    if (!redirectChecked) return;
+    // 역할 선택 모달이 떠 있으면 자동 이동하지 않음
+    if (googleUserToRegister) return;
+
+    const unsubscribeAuth = auth.onAuthStateChanged(async (user) => {
+      if (user) {
+        // Firestore에 문서가 있는 기존 사용자만 자동 이동
+        const userDocRef = doc(db, 'users', user.uid);
+        const userDocSnap = await getDoc(userDocRef);
+        
+        if (userDocSnap.exists()) {
+          // 기존 사용자 → 역할에 따라 자동 이동
+          console.log("Existing user detected, auto-routing...");
+          await routeUserBasedOnRole(user.uid);
+        } else {
+          // 신규 사용자 → 역할 선택 모달 표시 (자동 이동 안 함!)
+          console.log("New Google user detected, showing role modal...");
+          setGoogleUserToRegister(user);
+        }
+      }
+    });
+
     return () => unsubscribeAuth();
-  }, [googleUserToRegister]); // googleUserToRegister가 없을 때만 자동 이동하게 감시
+  }, [redirectChecked, googleUserToRegister]);
 
   const processGoogleUser = async (user: any) => {
     const userDocRef = doc(db, 'users', user.uid);
