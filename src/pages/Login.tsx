@@ -9,6 +9,7 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
+  sendPasswordResetEmail,
   GoogleAuthProvider
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, addDoc, collection, increment, serverTimestamp } from 'firebase/firestore';
@@ -94,6 +95,10 @@ const Login = () => {
   const [rememberEmail, setRememberEmail] = useState(false);
   const [showWebViewWarning, setShowWebViewWarning] = useState(false);
   const [redirectChecked, setRedirectChecked] = useState(false); // 리다이렉트 처리 완료 여부
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState(false);
 
   // 1단계: 구글 리다이렉트 결과를 먼저 처리 (최우선)
   useEffect(() => {
@@ -109,6 +114,10 @@ const Login = () => {
         const result = await getRedirectResult(auth);
         if (result) {
           console.log("Redirect result found:", result.user.email);
+          const credential = GoogleAuthProvider.credentialFromResult(result);
+          if (credential && credential.accessToken) {
+            sessionStorage.setItem('gcal_access_token', credential.accessToken);
+          }
           await processGoogleUser(result.user);
           
           // 사용 후 정리
@@ -224,10 +233,27 @@ const Login = () => {
   // 로그인 활동 기록 함수
   const recordLoginActivity = async (uid: string, loginMethod: string) => {
     try {
-      // 1. lastLoginAt 업데이트 + loginCount 증가 (setDoc merge로 존재하지 않아도 생성 가능하게)
-      await setDoc(doc(db, 'users', uid), {
+      const uDocRef = doc(db, 'users', uid);
+      const uSnap = await getDoc(uDocRef);
+      
+      let prevCount = 0;
+      let prevAvgMinutes = 0;
+      
+      if (uSnap.exists()) {
+        const d = uSnap.data();
+        prevCount = d.loginCount || 0;
+        prevAvgMinutes = d.avgLoginTimeMinutes || 0;
+      }
+      
+      const now = new Date();
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+      const newAvgMinutes = Math.round((prevAvgMinutes * prevCount + currentMinutes) / (prevCount + 1));
+
+      // 1. lastLoginAt 업데이트 + loginCount 증가 + avgLoginTimeMinutes 갱신
+      await setDoc(uDocRef, {
         lastLoginAt: serverTimestamp(),
-        loginCount: increment(1)
+        loginCount: increment(1),
+        avgLoginTimeMinutes: newAvgMinutes
       }, { merge: true });
 
       // 2. loginLogs 컬렉션에 접속 기록 저장
@@ -358,6 +384,7 @@ const Login = () => {
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
+      provider.addScope('https://www.googleapis.com/auth/calendar.events');
 
       if (isMobileDevice()) {
         // 모바일은 항상 리다이렉트 방식 사용 (팝업 차단 + WebView 이슈 회피)
@@ -368,6 +395,10 @@ const Login = () => {
         // 데스크톱: 팝업 시도 → 실패하면 리다이렉트로 폴백
         try {
           const result = await signInWithPopup(auth, provider);
+          const credential = GoogleAuthProvider.credentialFromResult(result);
+          if (credential && credential.accessToken) {
+            sessionStorage.setItem('gcal_access_token', credential.accessToken);
+          }
           await processGoogleUser(result.user);
         } catch (popupErr: any) {
           console.warn('Popup failed, falling back to redirect:', popupErr.code);
@@ -396,6 +427,31 @@ const Login = () => {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 비밀번호 재설정 이메일 발송
+  const handleResetPassword = async () => {
+    if (!resetEmail.trim()) {
+      setError('비밀번호를 재설정할 이메일을 입력해주세요.');
+      return;
+    }
+    setResetLoading(true);
+    setError('');
+    try {
+      await sendPasswordResetEmail(auth, resetEmail);
+      setResetSuccess(true);
+    } catch (err: any) {
+      console.error('Password reset error:', err);
+      if (err.code === 'auth/user-not-found') {
+        setError('등록되지 않은 이메일입니다.');
+      } else if (err.code === 'auth/invalid-email') {
+        setError('올바른 이메일 형식이 아닙니다.');
+      } else {
+        setError('비밀번호 재설정 메일 발송에 실패했습니다. 다시 시도해주세요.');
+      }
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -556,7 +612,7 @@ const Login = () => {
               </div>
 
               {isLogin && (
-                <div className="flex items-center px-1">
+                <div className="flex items-center justify-between px-1">
                   <label className="flex items-center gap-2 cursor-pointer group">
                     <div className="relative">
                       <input
@@ -570,6 +626,13 @@ const Login = () => {
                     </div>
                     <span className="text-sm font-medium text-slate-500 group-hover:text-slate-700 transition-colors">로그인 정보 저장</span>
                   </label>
+                  <button
+                    type="button"
+                    onClick={() => { setShowResetPassword(true); setResetEmail(email); setResetSuccess(false); setError(''); }}
+                    className="text-sm text-slate-400 hover:text-primary font-medium transition-colors"
+                  >
+                    비밀번호 찾기
+                  </button>
                 </div>
               )}
 
@@ -614,6 +677,97 @@ const Login = () => {
           </div>
         </motion.div>
       </main>
+
+      {/* 비밀번호 찾기 모달 */}
+      <AnimatePresence>
+        {showResetPassword && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-3xl p-8 shadow-2xl border border-slate-200 dark:border-slate-800"
+            >
+              {resetSuccess ? (
+                <div className="text-center">
+                  <div className="w-16 h-16 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <span className="material-symbols-outlined text-3xl text-emerald-500">mark_email_read</span>
+                  </div>
+                  <h3 className="text-xl font-black text-slate-900 dark:text-slate-100 tracking-tight mb-2">메일을 확인해주세요!</h3>
+                  <p className="text-slate-500 dark:text-slate-400 text-sm leading-relaxed mb-2">
+                    <strong className="text-primary">{resetEmail}</strong>
+                  </p>
+                  <p className="text-slate-500 dark:text-slate-400 text-sm leading-relaxed mb-6">
+                    위 주소로 비밀번호 재설정 링크를 발송했습니다.<br/>메일함을 확인하시고, 링크를 클릭하여 새 비밀번호를 설정해주세요.
+                  </p>
+                  <p className="text-xs text-slate-400 mb-6">* 메일이 보이지 않으면 스팸함도 확인해주세요.</p>
+                  <button
+                    onClick={() => { setShowResetPassword(false); setResetSuccess(false); }}
+                    className="w-full py-3.5 bg-primary text-white rounded-2xl font-bold text-sm hover:brightness-110 transition-all active:scale-[0.98]"
+                  >
+                    확인
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="text-center mb-6">
+                    <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <span className="material-symbols-outlined text-3xl text-primary">lock_reset</span>
+                    </div>
+                    <h3 className="text-xl font-black text-slate-900 dark:text-slate-100 tracking-tight">비밀번호 찾기</h3>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm mt-2 leading-relaxed">
+                      가입하신 이메일을 입력하시면<br/>비밀번호 재설정 링크를 보내드립니다.
+                    </p>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="flex flex-col gap-2">
+                      <label className="text-sm font-semibold text-slate-700 dark:text-slate-300 px-1">이메일 주소</label>
+                      <div className="relative">
+                        <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xl">mail</span>
+                        <input
+                          className="w-full pl-12 pr-4 py-3.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all"
+                          placeholder="example@email.com"
+                          type="email"
+                          value={resetEmail}
+                          onChange={(e) => setResetEmail(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleResetPassword()}
+                        />
+                      </div>
+                    </div>
+
+                    {error && <p className="text-rose-500 text-xs text-center font-medium">{error}</p>}
+
+                    <button
+                      onClick={handleResetPassword}
+                      disabled={resetLoading}
+                      className="w-full py-3.5 bg-primary text-white rounded-2xl font-bold text-sm hover:brightness-110 transition-all active:scale-[0.98] disabled:opacity-50"
+                    >
+                      {resetLoading ? (
+                        <span className="flex items-center justify-center gap-2">
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent animate-spin rounded-full"></div>
+                          발송 중...
+                        </span>
+                      ) : '재설정 메일 보내기'}
+                    </button>
+                    <button
+                      onClick={() => { setShowResetPassword(false); setError(''); }}
+                      className="w-full py-3 text-slate-400 text-sm font-medium hover:text-slate-600 transition-colors"
+                    >
+                      돌아가기
+                    </button>
+                  </div>
+                </>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* 푸터 */}
       <footer className="py-8 text-center text-slate-400 dark:text-slate-600 text-xs">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../firebase';
@@ -10,6 +10,17 @@ import {
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../firebase';
+// @ts-ignore
+import { getHolidays } from 'korean-holidays';
+
+export type RecurringRule = {
+  frequency: 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly';
+  interval: number;
+  endType: 'infinite' | 'count' | 'until';
+  endCount: number;
+  endDate: string;
+  weeklyDays: number[];
+};
 
 const BusinessDashboard = () => {
   const navigate = useNavigate();
@@ -22,6 +33,7 @@ const BusinessDashboard = () => {
   const [pendingReservations, setPendingReservations] = useState<any[]>([]);
   const [membersList, setMembersList] = useState<any[]>([]);
   const [selectedMember, setSelectedMember] = useState<any>(null);
+  const [memberModalTab, setMemberModalTab] = useState<'info' | 'reservations' | 'logs'>('info');
   const [memberLogs, setMemberLogs] = useState<any[]>([]);
   const [isLogModalOpen, setIsLogModalOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
@@ -64,55 +76,95 @@ const BusinessDashboard = () => {
 
   // 수업 등록 폼
   const todayStr = new Date().toISOString().split('T')[0];
-  const defaultSchedule = { startTime: '10:00', endTime: '18:00', disabledSlots: [] as string[] };
+  const defaultSchedule = { slots: [] as { time: string, duration: number }[] };
   const periodLabels: Record<string, string> = { week: '주', month: '월', year: '년' };
+  const [regCalendarMonth, setRegCalendarMonth] = useState(new Date());
   const [newClass, setNewClass] = useState({
     className: '',
     startDate: todayStr,
     endDate: todayStr,
-    duration: 60 as 30 | 60,
+    selectedDates: [] as string[],
+    duration: 60 as number,
     maxCapacity: 6,
     ticketPolicy: { period: 'month' as 'week' | 'month' | 'year', amount: 10 },
     selectedDays: [1, 2, 3, 4, 5] as number[],
     daySchedules: {
       0: { ...defaultSchedule }, 1: { ...defaultSchedule }, 2: { ...defaultSchedule },
       3: { ...defaultSchedule }, 4: { ...defaultSchedule }, 5: { ...defaultSchedule }, 6: { ...defaultSchedule }
-    } as Record<number, { startTime: string, endTime: string, disabledSlots: string[] }>,
+    } as Record<number, { slots: { time: string, duration: number }[] }>,
     classPhotoURL: ''
   });
   const [isRegistering, setIsRegistering] = useState(false);
   const [editingClassId, setEditingClassId] = useState<string | null>(null);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
 
+  // 주간 캘린더 상태
+  const [currentWeekStart, setCurrentWeekStart] = useState(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - d.getDay()); // 일요일 시작
+    return d;
+  });
+
+  const koreanHolidaysMap = useMemo(() => {
+    const year = currentWeekStart.getFullYear();
+    const prevHols = getHolidays(year - 1) || [];
+    const currHols = getHolidays(year) || [];
+    const nextHols = getHolidays(year + 1) || [];
+    const all = [...prevHols, ...currHols, ...nextHols];
+    
+    const map = new Map<string, string>();
+    all.forEach((h: any) => {
+      const d = new Date(h.date);
+      const kstFormatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Seoul',
+        year: 'numeric', month: '2-digit', day: '2-digit'
+      });
+      // en-CA format gives YYYY-MM-DD directly
+      const formatted = kstFormatter.format(d);
+      map.set(formatted, h.nameKo);
+    });
+    return map;
+  }, [currentWeekStart]);
+  
+  const [draftEvent, setDraftEvent] = useState<{
+    date: string;
+    time: string;
+    duration: number;
+    totalSelectedDuration: number;
+    className: string;
+    maxCapacity: number;
+    recurringRule?: RecurringRule;
+  } | null>(null);
+
+  const [dragSelection, setDragSelection] = useState<{ date: string; startIdx: number; currentIdx: number } | null>(null);
+
+  // List View & Batch Edit States
+  const [isBatchEditModalOpen, setIsBatchEditModalOpen] = useState(false);
+  const [batchEditData, setBatchEditData] = useState<{
+    className: string;
+    duration: number;
+    maxCapacity: number;
+  }>({
+    className: '',
+    duration: 60,
+    maxCapacity: 6
+  });
+
   const dayLabels = ['일', '월', '화', '수', '목', '금', '토'];
 
-  const generateSlots = (start: string, end: string, duration: number) => {
-    const slots: string[] = [];
-    if (!start || !end) return slots;
-    
-    let [h, m] = start.split(':').map(Number);
-    const [endH, endM] = end.split(':').map(Number);
-    const endMinutes = endH * 60 + endM;
 
-    while (h * 60 + m + duration <= endMinutes) {
-      slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
-      m += duration;
-      if (m >= 60) {
-        h += Math.floor(m / 60);
-        m = m % 60;
-      }
-    }
-    return slots;
-  };
 
   const handleResetForm = () => {
     setEditingClassId(null);
     setEditingGroupId(null);
+    setRegCalendarMonth(new Date());
     setNewClass({
       className: '',
       startDate: todayStr,
       endDate: todayStr,
-      duration: 60 as 30 | 60,
+      selectedDates: [],
+      duration: 60 as number,
       maxCapacity: 6,
       ticketPolicy: userData?.ticketPolicy || { period: 'month' as 'week' | 'month' | 'year', amount: 10 },
       selectedDays: [1, 2, 3, 4, 5] as number[],
@@ -237,6 +289,15 @@ const BusinessDashboard = () => {
     };
   }, [navigate]);
 
+  const formatAverageLoginTime = (minutes: number | undefined) => {
+    if (minutes === undefined || minutes === 0) return '-';
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    const ampm = h >= 12 ? '오후' : '오전';
+    const h12 = h % 12 || 12;
+    return `${ampm} ${h12}:${m.toString().padStart(2, '0')}`;
+  };
+
   const triggerFetchMembers = async (uids: string[], confirmedRes: any[], businessId: string) => {
     try {
       const list = [];
@@ -245,11 +306,14 @@ const BusinessDashboard = () => {
         if (!lastRes) continue;
         try {
           const uDoc = await getDoc(doc(db, 'users', uid));
+          const uData = uDoc.exists() ? uDoc.data() : null;
           list.push({
             ...lastRes,
-            tickets: uDoc.exists() ? (uDoc.data().ticketsByBusiness?.[businessId] || 0) : 0
+            tickets: uData ? (uData.ticketsByBusiness?.[businessId] || 0) : 0,
+            loginCount: uData?.loginCount || 0,
+            avgLoginTimeMinutes: uData?.avgLoginTimeMinutes || 0
           });
-        } catch { list.push({ ...lastRes, tickets: 0 }); }
+        } catch { list.push({ ...lastRes, tickets: 0, loginCount: 0, avgLoginTimeMinutes: 0 }); }
       }
       setMembersList(list);
     } catch (e) { console.error("fetchMembers error:", e); }
@@ -279,147 +343,158 @@ const BusinessDashboard = () => {
     return dates;
   };
 
-  const handleAddClass = async (e: FormEvent) => {
-    e.preventDefault();
-    const user = auth.currentUser;
-    if (!user) return;
-    if (!newClass.className.trim()) { alert('수업 이름을 입력해주세요.'); return; }
-
-    if (editingClassId || editingGroupId) {
-      // 수업 수정 로직
-      const confirmMsg = editingGroupId ? '연관된 모든 수업 일정을 한 번에 수정하시겠습니까?' : '이 수업 일정을 수정하시겠습니까?';
-      if (!window.confirm(confirmMsg)) return;
-      setIsRegistering(true);
-      try {
-        const dayOfWeek = new Date(newClass.startDate + 'T00:00:00').getDay();
-        const schedule = newClass.daySchedules[dayOfWeek];
-        const [h, m] = schedule.startTime.split(':').map(Number);
-        const endMin = h * 60 + m + newClass.duration;
-        const endTime = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
-
-        if (editingGroupId) {
-          // [전체 수정] groupId가 같은 모든 수업 업데이트
-          // groupId가 없는 구버전 데이터는 className으로 매칭
-          const q = query(
-            collection(db, 'classes'),
-            where('businessId', '==', user.uid),
-            editingGroupId !== 'legacy' 
-              ? where('groupId', '==', editingGroupId)
-              : where('className', '==', newClass.className)
-          );
-          const snap = await getDocs(q);
-          const batchPromises = snap.docs.map(d => updateDoc(d.ref, {
-            className: newClass.className,
-            maxCapacity: newClass.maxCapacity,
-            // 전체 수정 시에는 시간/날짜는 각자 다를 수 있으므로 이름과 정원만 우선 업데이트
-          }));
-          await Promise.all(batchPromises);
-          alert(`총 ${snap.docs.length}개의 수업 정보가 일괄 수정되었습니다! ✨`);
-        } else if (editingClassId) {
-          // [단일 수정]
-          await updateDoc(doc(db, 'classes', editingClassId), {
-            className: newClass.className,
-            date: newClass.startDate,
-            time: schedule.startTime,
-            endTime,
-            duration: newClass.duration,
-            maxCapacity: newClass.maxCapacity,
-          });
-          alert('수업 정보가 수정되었습니다! ✨');
-        }
-
-        setEditingClassId(null);
-        setEditingGroupId(null);
-        setNewClass({ ...newClass, className: '' });
-      } catch (err) {
-        console.error(err);
-        alert('수업 수정 실패');
-      } finally {
-        setIsRegistering(false);
-      }
-      return;
-    }
-
-    // 새 수업 등록 로직 (기존 유지)
-    if (newClass.selectedDays.length === 0) { alert('수업 요일을 선택해주세요.'); return; }
-    if (newClass.startDate > newClass.endDate) { alert('종료일은 시작일 이후여야 합니다.'); return; }
-
-    const dates = getDatesInRange(newClass.startDate, newClass.endDate, newClass.selectedDays);
-    if (dates.length === 0) { alert('선택한 기간과 요일에 해당하는 날짜가 없습니다.'); return; }
-    
-    const totalClassesToCreate = dates.reduce((acc, date) => {
-      const dayOfWeek = new Date(date + 'T00:00:00').getDay();
-      const schedule = newClass.daySchedules[dayOfWeek] || defaultSchedule;
-      if (!schedule) return acc;
-      const availableSlots = generateSlots(schedule.startTime, schedule.endTime, newClass.duration);
-      const activeSlots = availableSlots.filter(s => !schedule.disabledSlots.includes(s));
-      return acc + activeSlots.length;
-    }, 0);
-
-    if (totalClassesToCreate === 0) {
-      alert('설정된 시간 범위 내에 생성할 수 있는 수업 슬롯이 없습니다. 시작/종료 시간을 다시 확인해주세요.');
-      return;
-    }
-
-    if (!window.confirm(`"${newClass.className}" 수업을 총 ${totalClassesToCreate}개 일정으로 등록하시겠습니까?\n(${newClass.startDate} ~ ${newClass.endDate})`)) return;
+  const handleSaveDraftEvent = async () => {
+    if (!draftEvent) return;
+    if (!draftEvent.className.trim()) { alert('수업 이름을 입력해주세요.'); return; }
 
     setIsRegistering(true);
     try {
       const user = auth.currentUser;
       if (!user) return;
 
-      let photoURL = '';
-      if (classPhotoFile) {
-        const fileRef = ref(storage, `classes/${user.uid}/${Date.now()}_${classPhotoFile.name}`);
-        const uploadResult = await uploadBytes(fileRef, classPhotoFile);
-        photoURL = await getDownloadURL(uploadResult.ref);
+      const [h, m] = draftEvent.time.split(':').map(Number);
+      const endMin = h * 60 + m + draftEvent.duration;
+      const endTime = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
+
+      if (editingClassId) {
+        // [단일 수정]
+        const [h, m] = draftEvent.time.split(':').map(Number);
+        const endMin = h * 60 + m + draftEvent.duration;
+        const endTime = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
+        
+        await updateDoc(doc(db, 'classes', editingClassId), {
+          className: draftEvent.className,
+          date: draftEvent.date,
+          time: draftEvent.time,
+          endTime,
+          duration: draftEvent.duration,
+          maxCapacity: draftEvent.maxCapacity,
+        });
+        alert('수업 정보가 수정되었습니다! ✨');
+      } else {
+        // [신규 등록 - 연속 분할 생성 및 반복 일정 지원]
+        const countPerDay = Math.max(1, Math.floor(draftEvent.totalSelectedDuration / draftEvent.duration));
+        const groupId = Date.now().toString();
+        
+        const promises = [];
+        
+        // 1년(365일)치 제한
+        const MAX_DAYS_AHEAD = 365;
+        const [y, m, d] = draftEvent.date.split('-').map(Number);
+        const baseDateObj = new Date(y, m - 1, d);
+        const maxDateObj = new Date(baseDateObj);
+        maxDateObj.setDate(maxDateObj.getDate() + MAX_DAYS_AHEAD);
+
+        const targetDates: string[] = [];
+        const rule = draftEvent.recurringRule;
+
+        if (!rule || rule.frequency === 'none') {
+          targetDates.push(draftEvent.date);
+        } else {
+          let currentEventDate = new Date(baseDateObj);
+          let occurrencesCount = 0;
+          let endConditionMet = false;
+
+          while (!endConditionMet && currentEventDate <= maxDateObj) {
+            // 주간 반복일 경우, 요일 필터링 적용
+            if (rule.frequency !== 'weekly' || rule.weeklyDays.includes(currentEventDate.getDay())) {
+              const cy = currentEventDate.getFullYear();
+              const cm = String(currentEventDate.getMonth() + 1).padStart(2, '0');
+              const cd = String(currentEventDate.getDate()).padStart(2, '0');
+              const currentStr = `${cy}-${cm}-${cd}`;
+              
+              // until 조건 확인 (날짜 지정 종료)
+              if (rule.endType === 'until' && rule.endDate && currentStr > rule.endDate) {
+                endConditionMet = true;
+                break;
+              }
+
+              targetDates.push(currentStr);
+              occurrencesCount++;
+
+              // count 조건 확인
+              if (rule.endType === 'count' && occurrencesCount >= rule.endCount) {
+                endConditionMet = true;
+                break;
+              }
+            }
+
+            // 다음 날짜 계산 (weekly일 경우는 매일 이동하면서 요일을 체크하는 방식이 편함)
+            if (rule.frequency === 'daily' || rule.frequency === 'weekly') {
+              currentEventDate.setDate(currentEventDate.getDate() + 1);
+            } else if (rule.frequency === 'monthly') {
+              const nextMonth = new Date(currentEventDate);
+              nextMonth.setMonth(nextMonth.getMonth() + 1);
+              // 말일 보정 (ex: 1/31 -> 2/28)
+              if (nextMonth.getDate() !== currentEventDate.getDate() && currentEventDate.getDate() > 28) {
+                nextMonth.setDate(0); 
+              }
+              currentEventDate = nextMonth;
+            } else if (rule.frequency === 'yearly') {
+              currentEventDate.setFullYear(currentEventDate.getFullYear() + 1);
+            }
+          }
+        }
+
+        // targetDates 배열을 기반으로 문서 생성
+        for (const targetDateStr of targetDates) {
+          for (let i = 0; i < countPerDay; i++) {
+            const [startH, startM] = draftEvent.time.split(':').map(Number);
+            const startMinTotal = startH * 60 + startM + (i * draftEvent.duration);
+            const endMinTotal = startMinTotal + draftEvent.duration;
+
+            const classTime = `${String(Math.floor(startMinTotal / 60)).padStart(2, '0')}:${String(startMinTotal % 60).padStart(2, '0')}`;
+            const classEndTime = `${String(Math.floor(endMinTotal / 60)).padStart(2, '0')}:${String(endMinTotal % 60).padStart(2, '0')}`;
+
+            const classData: any = {
+              className: draftEvent.className,
+              date: targetDateStr,
+              time: classTime,
+              endTime: classEndTime,
+              duration: draftEvent.duration,
+              maxCapacity: draftEvent.maxCapacity,
+              businessId: user.uid,
+              businessName: userData?.businessName || '내 업체',
+              currentCapacity: 0,
+              groupId,
+              classPhotoURL: '',
+              createdAt: serverTimestamp()
+            };
+
+            const createWithGcal = async () => {
+              if (gcalToken) {
+                try {
+                  const googleEventId = await createGoogleEvent(gcalToken, {
+                    title: classData.className,
+                    startDateTime: formatDateTime(classData.date, classData.time),
+                    endDateTime: formatDateTime(classData.date, classData.endTime)
+                  });
+                  classData.googleEventId = googleEventId;
+                } catch (e: any) {
+                  if (e.message === 'EXPIRED_TOKEN') {
+                    console.warn('Google Calendar Token Expired');
+                  }
+                }
+              }
+              return addDoc(collection(db, 'classes'), classData);
+            };
+
+            promises.push(createWithGcal());
+          }
+        }
+        await Promise.all(promises);
+        const totalCreated = promises.length;
+        alert(totalCreated > 1 ? `총 ${totalCreated}개의 수업이 성공적으로 등록되었습니다! 🎉` : '수업이 성공적으로 등록되었습니다! 🎉');
       }
 
-      const groupId = Date.now().toString(); // 그룹 식별자 생성
-      
-      // 사업자 프로필에 티켓 정책 저장 (추후 회원 승인 시 사용)
-      await updateDoc(doc(db, 'users', user.uid), {
-        ticketPolicy: newClass.ticketPolicy
-      });
-
-      const promises: Promise<any>[] = [];
-      dates.forEach(date => {
-        const dayOfWeek = new Date(date + 'T00:00:00').getDay();
-        const schedule = newClass.daySchedules[dayOfWeek] || defaultSchedule;
-        if (!schedule) return;
-        
-        const availableSlots = generateSlots(schedule.startTime, schedule.endTime, newClass.duration);
-        const times = availableSlots.filter(s => !schedule.disabledSlots.includes(s));
-        
-        times.forEach(time => {
-          // 종료 시간 계산
-          const [h, m] = time.split(':').map(Number);
-          const endMin = h * 60 + m + newClass.duration;
-          const endTime = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
-          
-          promises.push(addDoc(collection(db, 'classes'), {
-            className: newClass.className,
-            date,
-            time,
-            endTime,
-            duration: newClass.duration,
-            maxCapacity: newClass.maxCapacity,
-            businessId: user.uid,
-            businessName: userData?.businessName || '내 업체',
-            currentCapacity: 0,
-            groupId, // 동일 배치 수업 그룹화
-            classPhotoURL: photoURL,
-            createdAt: serverTimestamp()
-          }));
-        });
-      });
-      await Promise.all(promises);
-      alert(`${totalClassesToCreate}개 수업이 성공적으로 등록되었습니다! 🎉`);
-      setNewClass({ ...newClass, className: '', classPhotoURL: '' });
-      setClassPhotoFile(null);
-      setClassPhotoPreview(null);
-    } catch { alert('수업 등록 실패'); }
-    finally { setIsRegistering(false); }
+      setDraftEvent(null);
+      setEditingClassId(null);
+    } catch (err) {
+      console.error(err);
+      alert('저장 실패');
+    } finally {
+      setIsRegistering(false);
+    }
   };
 
   const handleApproveReservation = async (res: any) => {
@@ -467,40 +542,81 @@ const BusinessDashboard = () => {
   };
 
   const startEditing = (cls: any, isSeries: boolean = false) => {
-    const classDate = new Date(cls.date + 'T00:00:00');
-    const dayIdx = classDate.getDay();
-    
     if (isSeries) {
-      setEditingGroupId(cls.groupId || 'legacy');
-      setEditingClassId(null);
-    } else {
-      setEditingClassId(cls.id);
-      setEditingGroupId(null);
+      alert('주간 캘린더 모드에서는 현재 단일 수업 수정만 지원합니다.');
+      return;
     }
 
-    setNewClass({
-      className: cls.className,
-      startDate: cls.date,
-      endDate: cls.date,
+    setEditingClassId(cls.id);
+    setEditingGroupId(null);
+
+    // 해당 클래스의 날짜가 포함된 주로 캘린더 뷰 이동
+    const classDate = new Date(cls.date + 'T00:00:00');
+    const d = new Date(classDate);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - d.getDay()); // 해당 주의 일요일
+    setCurrentWeekStart(d);
+
+    setDraftEvent({
+      date: cls.date,
+      time: cls.time,
       duration: cls.duration || 60,
-      maxCapacity: cls.maxCapacity,
-      selectedDays: [dayIdx],
-      daySchedules: {
-        ...newClass.daySchedules,
-        [dayIdx]: {
-          startTime: cls.time,
-          endTime: cls.endTime || '18:00',
-          disabledSlots: []
-        }
-      },
-      ticketPolicy: cls.ticketPolicy || userData?.ticketPolicy || { period: 'month', amount: 10 },
-      classPhotoURL: cls.classPhotoURL || ''
+      totalSelectedDuration: cls.duration || 60,
+      className: cls.className,
+      maxCapacity: cls.maxCapacity
     });
+
     setActiveTab('classes');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
 
+
+  const handleBatchDelete = async () => {
+    if (selectedClassIds.length === 0) return;
+    if (!window.confirm(`선택한 ${selectedClassIds.length}개의 수업을 일괄 삭제하시겠습니까?`)) return;
+
+    try {
+      const promises = selectedClassIds.map(id => deleteDoc(doc(db, 'classes', id)));
+      await Promise.all(promises);
+      alert('일괄 삭제가 완료되었습니다.');
+      setSelectedClassIds([]);
+    } catch (err) {
+      console.error(err);
+      alert('삭제 중 오류가 발생했습니다.');
+    }
+  };
+
+  const handleBatchEdit = async () => {
+    if (selectedClassIds.length === 0) return;
+    if (!batchEditData.className.trim()) { alert('수업 이름을 입력해주세요.'); return; }
+    if (!window.confirm(`선택한 ${selectedClassIds.length}개의 수업을 일괄 수정하시겠습니까?`)) return;
+
+    try {
+      const promises = selectedClassIds.map(async (id) => {
+        const classDoc = classes.find(c => c.id === id);
+        if (!classDoc) return;
+        
+        const [h, m] = classDoc.time.split(':').map(Number);
+        const endMin = h * 60 + m + batchEditData.duration;
+        const endTime = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
+
+        return updateDoc(doc(db, 'classes', id), {
+          className: batchEditData.className,
+          duration: batchEditData.duration,
+          maxCapacity: batchEditData.maxCapacity,
+          endTime
+        });
+      });
+      await Promise.all(promises);
+      alert('일괄 수정이 완료되었습니다.');
+      setSelectedClassIds([]);
+      setIsBatchEditModalOpen(false);
+    } catch (err) {
+      console.error(err);
+      alert('일괄 수정 중 오류가 발생했습니다.');
+    }
+  };
 
   const handleRejectReservation = async (res: any) => {
     if (!window.confirm(`${res.userName}님의 예약을 거절하시겠습니까?`)) return;
@@ -573,13 +689,23 @@ const BusinessDashboard = () => {
         // 예약 취소 상태로 변경
         await updateDoc(resDoc.ref, { status: 'CANCELLED_BY_BUSINESS' });
         // 티켓 환불
+        const requiredTickets = Math.ceil((resData.classDuration || classDoc.duration || 60) / 30);
         const userRef = doc(db, 'users', resData.uid);
         await updateDoc(userRef, { 
-          [`ticketsByBusiness.${user.uid}`]: increment(1) 
+          [`ticketsByBusiness.${user.uid}`]: increment(requiredTickets) 
         });
       }
 
       await deleteDoc(doc(db, 'classes', id));
+
+      const gcalToken = sessionStorage.getItem('gcal_access_token');
+      if (gcalToken && classDoc.googleEventId) {
+        try {
+          await deleteGoogleEvent(gcalToken, classDoc.googleEventId);
+        } catch (e) {
+          console.warn('Failed to delete google event', e);
+        }
+      }
     } catch (err) {
       console.error(err);
       alert('삭제 처리 중 오류 발생');
@@ -609,12 +735,19 @@ const BusinessDashboard = () => {
         for (const resDoc of snapRes.docs) {
           const resData = resDoc.data();
           await updateDoc(resDoc.ref, { status: 'CANCELLED_BY_BUSINESS' });
+          const requiredTickets = Math.ceil((resData.classDuration || d.data().duration || 60) / 30);
           const userRef = doc(db, 'users', resData.uid);
           await updateDoc(userRef, { 
-            [`ticketsByBusiness.${user.uid}`]: increment(1) 
+            [`ticketsByBusiness.${user.uid}`]: increment(requiredTickets) 
           });
         }
         await deleteDoc(d.ref);
+        const gcalToken = sessionStorage.getItem('gcal_access_token');
+        if (gcalToken && d.data().googleEventId) {
+          try {
+            await deleteGoogleEvent(gcalToken, d.data().googleEventId);
+          } catch (e) { console.warn(e); }
+        }
       }
       
       alert(`총 ${snap.docs.length}개의 수업 일정이 삭제되었습니다.`);
@@ -624,6 +757,52 @@ const BusinessDashboard = () => {
     } catch (err) {
       console.error(err);
       alert('일괄 삭제 실패');
+    }
+  };
+
+  const handleDeleteAllClasses = async () => {
+    const user = auth.currentUser;
+    if (!user) return;
+
+    if (classes.length === 0) {
+      alert('초기화할 수업이 없습니다.');
+      return;
+    }
+
+    const firstConfirm = window.confirm(`정말 모든 수업을 초기화(삭제)하시겠습니까?\n현재 등록된 총 ${classes.length}개의 수업이 모두 삭제되며, 이 작업은 되돌릴 수 없습니다.`);
+    if (!firstConfirm) return;
+
+    const secondConfirm = window.confirm(`[최종 확인]\n다시 한 번 확인합니다. 진짜로 전체 수업을 삭제하시겠습니까?\n진행 중인 예약이 있다면 모두 취소 및 이용권 환불 처리됩니다.`);
+    if (!secondConfirm) return;
+
+    try {
+      // 모든 수업 삭제 및 관련 예약 환불 처리
+      for (const cls of classes) {
+        // 예약들 환불 처리
+        const qRes = query(collection(db, 'reservations'), where('classId', '==', cls.id), where('status', '==', 'CONFIRMED'));
+        const snapRes = await getDocs(qRes);
+        for (const resDoc of snapRes.docs) {
+          const resData = resDoc.data();
+          await updateDoc(resDoc.ref, { status: 'CANCELLED_BY_BUSINESS' });
+          const requiredTickets = Math.ceil((resData.classDuration || cls.duration || 60) / 30);
+          const userRef = doc(db, 'users', resData.uid);
+          await updateDoc(userRef, { 
+            [`ticketsByBusiness.${user.uid}`]: increment(requiredTickets) 
+          });
+        }
+        // 수업 삭제
+        await deleteDoc(doc(db, 'classes', cls.id));
+        const gcalToken = sessionStorage.getItem('gcal_access_token');
+        if (gcalToken && cls.googleEventId) {
+          try {
+            await deleteGoogleEvent(gcalToken, cls.googleEventId);
+          } catch (e) { console.warn(e); }
+        }
+      }
+      alert('모든 수업이 완전히 초기화되었습니다.');
+    } catch (err) {
+      console.error(err);
+      alert('전체 수업 초기화 중 오류가 발생했습니다.');
     }
   };
 
@@ -647,13 +826,21 @@ const BusinessDashboard = () => {
           const resData = resDoc.data();
           await updateDoc(resDoc.ref, { status: 'CANCELLED_BY_BUSINESS' });
           if (user) {
+            const requiredTickets = Math.ceil((resData.classDuration || 60) / 30);
             const userRef = doc(db, 'users', resData.uid);
             await updateDoc(userRef, { 
-              [`ticketsByBusiness.${user.uid}`]: increment(1) 
+              [`ticketsByBusiness.${user.uid}`]: increment(requiredTickets) 
             });
           }
         }
         await deleteDoc(doc(db, 'classes', id));
+        const classDoc = classes.find(c => c.id === id);
+        const gcalToken = sessionStorage.getItem('gcal_access_token');
+        if (gcalToken && classDoc?.googleEventId) {
+          try {
+            await deleteGoogleEvent(gcalToken, classDoc.googleEventId);
+          } catch (e) { console.warn(e); }
+        }
       }
       alert('선택한 수업들이 삭제되었습니다.');
       setSelectedClassIds([]);
@@ -741,6 +928,7 @@ const BusinessDashboard = () => {
 
   const handleShowMemberDetails = async (member: any) => {
     setIsLogModalOpen(true);
+    setMemberModalTab('info');
     setMemberLogs([]); // 초기화
     
     try {
@@ -942,16 +1130,25 @@ const BusinessDashboard = () => {
                   <h3 className="text-xl font-bold">등록 수업 마스터 목록</h3>
                   <p className="text-sm text-slate-500">등록된 수업 종류별(시리즈별) 요약 목록입니다.</p>
                 </div>
-                <button 
-                  onClick={() => {
-                    handleResetForm();
-                    setActiveTab('classes');
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl font-bold text-sm shadow-lg shadow-primary/20 hover:brightness-110 transition-all"
-                >
-                  <span className="material-symbols-outlined text-sm">add</span>
-                  새 수업 등록하기
-                </button>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={handleDeleteAllClasses}
+                    className="flex items-center gap-2 px-4 py-2 bg-rose-50 text-rose-500 rounded-xl font-bold text-sm hover:bg-rose-100 transition-all"
+                  >
+                    <span className="material-symbols-outlined text-sm">delete_sweep</span>
+                    전체 초기화
+                  </button>
+                  <button 
+                    onClick={() => {
+                      handleResetForm();
+                      setActiveTab('classes');
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl font-bold text-sm shadow-lg shadow-primary/20 hover:brightness-110 transition-all"
+                  >
+                    <span className="material-symbols-outlined text-sm">add</span>
+                    새 수업 등록하기
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 gap-4">
@@ -985,7 +1182,7 @@ const BusinessDashboard = () => {
                     </div>
 
                     <div className="flex items-center gap-8">
-                      <div className="text-center px-4 border-x border-slate-100 dark:border-slate-800">
+          <div className="text-center px-4 border-x border-slate-100 dark:border-slate-800">
                         <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">총 일정</p>
                         <p className="text-xl font-black text-primary">{group.totalInstances}<span className="text-xs font-medium text-slate-400 ml-0.5">회</span></p>
                       </div>
@@ -1022,7 +1219,7 @@ const BusinessDashboard = () => {
                   </div>
                 ))}
                 {groupedClassesList.length === 0 && (
-                  <div className="bg-white dark:bg-slate-900 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 p-10 md:p-20 text-center">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 p-10 md:p-20 text-center">
                     <span className="material-symbols-outlined text-5xl text-slate-200 mb-4">inventory_2</span>
                     <p className="text-slate-400 font-medium">등록된 수업이 없습니다.</p>
                     <button onClick={() => setActiveTab('classes')} className="mt-4 text-primary font-bold text-sm hover:underline underline-offset-4">첫 수업 등록하러 가기 →</button>
@@ -1032,1033 +1229,466 @@ const BusinessDashboard = () => {
             </div>
           )}
 
-          {/* ===== 수업 일정 관리 탭 ===== */}
+          {/* ===== 수업 목록 뷰 (테이블 타입) ===== */}
           {activeTab === 'classes' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              <div className="lg:col-span-1 bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800">
-                <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-lg font-bold flex items-center gap-2">
-                    <span className="material-symbols-outlined text-primary">{editingClassId || editingGroupId ? 'edit_calendar' : 'add_circle'}</span>
-                    {editingGroupId ? '전체 수업 수정' : editingClassId ? '단일 수업 수정' : '새 수업 등록'}
-                  </h3>
-                  {(editingClassId || editingGroupId) && (
-                    <button 
-                      type="button" 
-                      onClick={handleResetForm}
-                      className="text-xs font-bold text-slate-400 hover:text-rose-500 transition-colors"
-                    >
-                      수정 취소
-                    </button>
-                  )}
-                </div>
-                <form onSubmit={handleAddClass} className="space-y-4">
-                  {/* 수업 이름 */}
-                  <div>
-                    <label className="text-xs text-slate-500 font-bold block mb-1.5">수업 이름</label>
-                    <input 
-                      type="text" 
-                      placeholder="예: 요가 기초반, 필라테스 A반" 
-                      className="w-full h-11 px-4 rounded-xl border border-slate-200 bg-slate-50 dark:bg-slate-800 dark:border-slate-700 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-slate-900" 
-                      value={newClass.className} 
-                      onChange={e => setNewClass({ ...newClass, className: e.target.value })} 
-                      required 
-                    />
-                  </div>
-
-                  {/* 수업 사진 업로드 */}
-                  <div>
-                    <label className="text-xs text-slate-500 font-bold block mb-1.5">수업 사진</label>
-                    <div className="flex items-center gap-4">
-                      <div className="w-20 h-20 rounded-2xl bg-slate-100 dark:bg-slate-800 border-2 border-dashed border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden shrink-0">
-                        {classPhotoPreview ? (
-                          <img src={classPhotoPreview} alt="Preview" className="w-full h-full object-cover" />
-                        ) : (
-                          <span className="material-symbols-outlined text-slate-400">add_a_photo</span>
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <label className="inline-flex items-center px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm">
-                          파일 선택
-                          <input 
-                            type="file" 
-                            accept="image/*" 
-                            className="hidden" 
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) {
-                                setClassPhotoFile(file);
-                                const reader = new FileReader();
-                                reader.onloadend = () => setClassPhotoPreview(reader.result as string);
-                                reader.readAsDataURL(file);
-                              }
-                            }}
-                          />
-                        </label>
-                        <p className="text-[10px] text-slate-400 mt-1.5">수업의 분위기를 보여주는 사진을 권장합니다.</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 수업 기간 - 수정 시에는 시작일만 노출 (전체 수정 시에는 기간 안내) */}
-                  <div>
-                    <label className="text-xs text-slate-500 font-bold block mb-1.5">{editingGroupId ? '수업 정보' : editingClassId ? '수업 날짜' : '수업 기간'}</label>
-                    {editingGroupId ? (
-                      <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] text-slate-500">
-                        <p className="flex items-center gap-1 font-bold text-primary mb-1">
-                          <span className="material-symbols-outlined text-xs">info</span>
-                          전체 수정 모드 안내
-                        </p>
-                        <p>선택하신 수업과 같은 그룹으로 등록된 모든 일정의 <strong>이름</strong>과 <strong>최대 정원</strong>이 일괄 변경됩니다.</p>
-                        <p className="mt-1 text-[10px] text-slate-400">※ 개별적인 시간 및 날짜 변경은 '단일 수업 수정'을 이용해주세요.</p>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className={editingClassId ? 'col-span-2' : ''}>
-                          <span className="text-[10px] text-slate-400 block mb-0.5">{editingClassId ? '날짜 선택' : '시작일'}</span>
-                          <input 
-                            type="date" 
-                            className="w-full h-11 px-3 rounded-xl border border-slate-200 bg-slate-50 dark:bg-slate-800 dark:border-slate-700 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all" 
-                            value={newClass.startDate} 
-                            onChange={e => setNewClass({ ...newClass, startDate: e.target.value })} 
-                            required 
-                          />
-                        </div>
-                        {!editingClassId && (
-                          <div>
-                            <span className="text-[10px] text-slate-400 block mb-0.5">종료일</span>
-                            <input 
-                              type="date" 
-                              className="w-full h-11 px-3 rounded-xl border border-slate-200 bg-slate-50 dark:bg-slate-800 dark:border-slate-700 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all" 
-                              value={newClass.endDate} 
-                              onChange={e => setNewClass({ ...newClass, endDate: e.target.value })} 
-                              required 
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 요일 선택 - 수정 시에는 숨김 */}
-                  {!editingClassId && !editingGroupId && (
-                    <div>
-                      <label className="text-xs text-slate-500 font-bold block mb-1.5">수업 요일</label>
-                      <div className="flex gap-1">
-                        {dayLabels.map((label, idx) => (
-                          <button
-                            key={idx}
-                            type="button"
-                            onClick={() => {
-                              const days = newClass.selectedDays.includes(idx)
-                                ? newClass.selectedDays.filter(d => d !== idx)
-                                : [...newClass.selectedDays, idx];
-                              setNewClass({ ...newClass, selectedDays: days });
-                            }}
-                            className={`flex-1 h-9 rounded-lg text-xs font-bold transition-all ${
-                              newClass.selectedDays.includes(idx)
-                                ? idx === 0 ? 'bg-rose-500 text-white' : idx === 6 ? 'bg-blue-500 text-white' : 'bg-primary text-white'
-                                : 'bg-slate-100 dark:bg-slate-800 text-slate-400 hover:bg-slate-200'
-                            }`}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 요일별 시간 설정 - 수정 시에는 숨김(단일 수정만 표시) */}
-                  {newClass.selectedDays.length > 0 && !editingGroupId && (
-                    <div>
-                      <label className="text-xs text-slate-500 font-bold block mb-1.5 flex items-center justify-between">
-                        <span>{editingClassId ? '수업 시간 확인' : '요일별 수업 시간'}</span>
-                        {!editingClassId && <span className="font-normal text-slate-400">원하지 않는 시간은 클릭하여 OFF할 수 있습니다.</span>}
-                      </label>
-                      <div className="space-y-4">
-                        {newClass.selectedDays.sort((a, b) => a - b).map((dayIdx, index) => {
-                          const schedule = newClass.daySchedules[dayIdx] || defaultSchedule;
-                          const availableSlots = generateSlots(schedule.startTime, schedule.endTime, newClass.duration);
-                          
-                          return (
-                            <div key={dayIdx} className="flex flex-col gap-3 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
-                              <div className="flex items-center gap-2">
-                                <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold text-white shrink-0 ${
-                                  dayIdx === 0 ? 'bg-rose-500' : dayIdx === 6 ? 'bg-blue-500' : 'bg-primary'
-                                }`}>
-                                  {dayLabels[dayIdx]}
-                                </span>
-                                
-                                <input 
-                                  type="time" 
-                                  className="h-9 px-2 rounded-lg border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-700 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all"
-                                  value={schedule.startTime}
-                                  onChange={e => {
-                                    setNewClass({
-                                      ...newClass,
-                                      daySchedules: { ...newClass.daySchedules, [dayIdx]: { ...schedule, startTime: e.target.value, disabledSlots: [] } }
-                                    });
-                                  }}
-                                />
-                                <span className="text-slate-400 font-bold">~</span>
-                                <input 
-                                  type="time" 
-                                  className="h-9 px-2 rounded-lg border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-700 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all"
-                                  value={schedule.endTime}
-                                  onChange={e => {
-                                    setNewClass({
-                                      ...newClass,
-                                      daySchedules: { ...newClass.daySchedules, [dayIdx]: { ...schedule, endTime: e.target.value, disabledSlots: [] } }
-                                    });
-                                  }}
-                                />
-                                
-                                {index === 0 && newClass.selectedDays.length > 1 && !editingClassId && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const newSchedules = { ...newClass.daySchedules };
-                                      newClass.selectedDays.forEach(d => {
-                                        newSchedules[d] = { ...schedule, disabledSlots: [...schedule.disabledSlots] };
-                                      });
-                                      setNewClass({ ...newClass, daySchedules: newSchedules });
-                                      alert('다른 선택된 요일에도 동일한 설정이 적용되었습니다.');
-                                    }}
-                                    className="ml-auto text-xs bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm transition-all flex items-center gap-1 font-medium"
-                                  >
-                                    <span className="material-symbols-outlined text-[14px]">content_copy</span>
-                                    다른 요일에 동일 적용
-                                  </button>
-                                )}
-                              </div>
-                              
-                              <div className="flex flex-wrap gap-2 pl-10">
-                                {editingClassId || editingGroupId ? (
-                                  <p className="text-xs text-slate-500 bg-white dark:bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 font-bold">
-                                    {schedule.startTime} 수업 수정 중
-                                  </p>
-                                ) : availableSlots.length > 0 ? availableSlots.map(slot => {
-                                  const isDisabled = schedule.disabledSlots.includes(slot);
-                                  return (
-                                    <button
-                                      key={slot}
-                                      type="button"
-                                      onClick={() => {
-                                        const newDisabled = isDisabled 
-                                          ? schedule.disabledSlots.filter(s => s !== slot)
-                                          : [...schedule.disabledSlots, slot];
-                                        setNewClass({
-                                          ...newClass,
-                                          daySchedules: { ...newClass.daySchedules, [dayIdx]: { ...schedule, disabledSlots: newDisabled } }
-                                        });
-                                      }}
-                                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                                        isDisabled
-                                          ? 'bg-slate-200 dark:bg-slate-700/50 text-slate-400 dark:text-slate-500 line-through opacity-60'
-                                          : 'bg-primary/10 text-primary border border-primary/20 hover:bg-primary hover:text-white shadow-sm'
-                                      }`}
-                                    >
-                                      {slot}
-                                    </button>
-                                  );
-                                }) : (
-                                  <p className="text-xs text-slate-400 py-1 flex items-center gap-1">
-                                    <span className="material-symbols-outlined text-[14px]">info</span>
-                                    설정된 시간 내에 생성 가능한 수업이 없습니다.
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 수업 시간 (길이) - 전체 수정 시 숨김 */}
-                  {!editingGroupId && (
-                    <div>
-                      <label className="text-xs text-slate-500 font-bold block mb-1.5">수업 시간</label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const newSchedules = { ...newClass.daySchedules };
-                            Object.keys(newSchedules).forEach(k => { newSchedules[Number(k)].disabledSlots = []; });
-                            setNewClass({ ...newClass, duration: 60, daySchedules: newSchedules });
-                          }}
-                          className={`h-11 rounded-xl text-sm font-bold transition-all border ${
-                            newClass.duration === 60
-                              ? 'bg-primary text-white border-primary shadow-md shadow-primary/20'
-                              : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 hover:border-primary'
-                          }`}
-                        >
-                          <span className="material-symbols-outlined text-sm align-middle mr-1">schedule</span>
-                          1시간
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const newSchedules = { ...newClass.daySchedules };
-                            Object.keys(newSchedules).forEach(k => { newSchedules[Number(k)].disabledSlots = []; });
-                            setNewClass({ ...newClass, duration: 30, daySchedules: newSchedules });
-                          }}
-                          className={`h-11 rounded-xl text-sm font-bold transition-all border ${
-                            newClass.duration === 30
-                              ? 'bg-primary text-white border-primary shadow-md shadow-primary/20'
-                              : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 hover:border-primary'
-                          }`}
-                        >
-                          <span className="material-symbols-outlined text-sm align-middle mr-1">schedule</span>
-                          30분
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 회원 인원 */}
-                  <div>
-                    <label className="text-xs text-slate-500 font-bold block mb-1.5">회원 인원 <span className="text-primary">({newClass.maxCapacity}명)</span></label>
-                    <div className="flex gap-1.5">
-                      {[1, 2, 3, 4, 5, 6].map(n => (
-                        <button
-                          key={n}
-                          type="button"
-                          onClick={() => setNewClass({ ...newClass, maxCapacity: n })}
-                          className={`flex-1 h-10 rounded-lg text-sm font-bold transition-all ${
-                            newClass.maxCapacity === n
-                              ? 'bg-primary text-white shadow-md shadow-primary/20'
-                              : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200'
-                          }`}
-                        >
-                          {n}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* 신규 회원 수강권 정책 설정 */}
-                  {!editingClassId && !editingGroupId && (
-                    <div className="space-y-4 p-4 bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/30 rounded-xl">
-                      <label className="text-xs text-amber-700 dark:text-amber-400 font-bold block flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[16px]">confirmation_number</span>
-                        수강권 지급 정책
-                      </label>
-
-                      {/* 기간 단위 선택 */}
-                      <div>
-                        <p className="text-[10px] text-slate-500 font-bold mb-1.5 px-1">기간 단위</p>
-                        <div className="grid grid-cols-3 gap-2">
-                          {(['week', 'month', 'year'] as const).map(p => (
-                            <button
-                              key={p}
-                              type="button"
-                              onClick={() => setNewClass({ ...newClass, ticketPolicy: { ...newClass.ticketPolicy, period: p } })}
-                              className={`h-11 rounded-xl text-sm font-bold transition-all border ${
-                                newClass.ticketPolicy.period === p
-                                  ? 'bg-primary text-white border-primary shadow-md shadow-primary/20'
-                                  : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 hover:border-primary'
-                              }`}
-                            >
-                              {periodLabels[p]}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* 횟수 설정 */}
-                      <div>
-                        <p className="text-[10px] text-slate-500 font-bold mb-1.5 px-1">지급 횟수</p>
-                        <div className="flex gap-2">
-                          {[5, 10, 20, 30, 50].map(n => (
-                            <button
-                              key={n}
-                              type="button"
-                              onClick={() => setNewClass({ ...newClass, ticketPolicy: { ...newClass.ticketPolicy, amount: n } })}
-                              className={`flex-1 h-11 rounded-xl text-sm font-bold transition-all border ${
-                                newClass.ticketPolicy.amount === n
-                                  ? 'bg-primary text-white border-primary shadow-md shadow-primary/20'
-                                  : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 hover:border-primary'
-                              }`}
-                            >
-                              {n}회
-                            </button>
-                          ))}
-                        </div>
-                        <div className="mt-2 flex items-center gap-2">
-                          <span className="text-[10px] text-slate-400">직접 입력:</span>
-                          <input
-                            type="number"
-                            min="1"
-                            max="999"
-                            value={newClass.ticketPolicy.amount}
-                            onChange={(e) => setNewClass({ ...newClass, ticketPolicy: { ...newClass.ticketPolicy, amount: Math.max(1, parseInt(e.target.value) || 1) } })}
-                            className="w-20 h-8 px-2 text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-bold focus:ring-2 focus:ring-primary outline-none"
-                          />
-                          <span className="text-[10px] text-slate-400">회</span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 p-2 bg-white dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700">
-                        <span className="material-symbols-outlined text-primary text-sm">info</span>
-                        <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                          회원 승인 시 <strong className="text-primary">{periodLabels[newClass.ticketPolicy.period]} {newClass.ticketPolicy.amount}회</strong> 자동 지급
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 미리보기 - 수정 시에는 숨김 */}
-                  {!editingClassId && !editingGroupId && newClass.className && newClass.startDate && newClass.endDate && newClass.selectedDays.length > 0 && (
-                    <div className="p-3 bg-primary/5 border border-primary/20 rounded-xl text-xs text-slate-600">
-                      <p className="font-bold text-primary mb-1">📋 등록 미리보기</p>
-                      <p>수업명: <strong>{newClass.className}</strong></p>
-                      <p>기간: {newClass.startDate} ~ {newClass.endDate}</p>
-                      <p>수강권 정책: <strong>{periodLabels[newClass.ticketPolicy.period]} {newClass.ticketPolicy.amount}회</strong> (신규 회원 승인 시)</p>
-                      <div className="mt-1">
-                        {newClass.selectedDays.sort((a, b) => a - b).map(d => {
-                          const schedule = newClass.daySchedules[d];
-                          const available = schedule ? generateSlots(schedule.startTime, schedule.endTime, newClass.duration) : [];
-                          const active = available.filter(s => !schedule?.disabledSlots.includes(s));
-                          return (
-                            <p key={d}>{dayLabels[d]}요일: <strong>{active.length > 0 ? active.join(', ') : '수업 없음'}</strong></p>
-                          );
-                        })}
-                      </div>
-                      <p>수업시간: <strong>{newClass.duration}분</strong> · 인원: <strong>{newClass.maxCapacity}명</strong></p>
-                      <p className="mt-1 text-primary font-bold">
-                        → 총 {(() => {
-                          const dates = getDatesInRange(newClass.startDate, newClass.endDate, newClass.selectedDays);
-                          return dates.reduce((acc, date) => {
-                            const dayNum = new Date(date + 'T00:00:00').getDay();
-                            const schedule = newClass.daySchedules[dayNum] || defaultSchedule;
-                            const available = generateSlots(schedule.startTime, schedule.endTime, newClass.duration);
-                            return acc + available.filter(s => !schedule.disabledSlots.includes(s)).length;
-                          }, 0);
-                        })()}개 수업 생성 예정
-                      </p>
-                    </div>
-                  )}
-
+            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-col h-[80vh] min-h-[600px] overflow-hidden relative">
+              {/* Header */}
+              <div className="flex justify-between items-center p-4 border-b border-slate-200 dark:border-slate-800">
+                <div className="flex items-center gap-4">
                   <button 
-                    type="submit" 
-                    disabled={isRegistering}
-                    className="w-full py-3.5 bg-primary text-white rounded-xl font-bold hover:brightness-110 shadow-lg shadow-primary/20 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
+                    onClick={() => {
+                      const d = new Date();
+                      d.setHours(0, 0, 0, 0);
+                      d.setDate(d.getDate() - d.getDay());
+                      setCurrentWeekStart(d);
+                    }} 
+                    className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-bold hover:bg-slate-50 transition-colors text-slate-700 dark:text-slate-300"
                   >
-                    {isRegistering ? (
-                      <><span className="material-symbols-outlined animate-spin text-lg">progress_activity</span> 처리 중...</>
-                    ) : (
-                      <><span className="material-symbols-outlined text-lg">{editingClassId || editingGroupId ? 'save' : 'add'}</span> {editingGroupId ? '전체 수업 정보 수정하기' : editingClassId ? '수업 정보 수정하기' : '수업 등록하기'}</>
-                    )}
+                    오늘
                   </button>
-
-                  {/* 전체 삭제 버튼 (전체 수정 모드일 때만 노출) */}
-                  {editingGroupId && (
-                    <div className="pt-4 mt-2 border-t border-slate-100 dark:border-slate-800">
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteSeries(editingGroupId, newClass.className)}
-                        className="w-full py-3 text-rose-500 font-bold rounded-xl border border-rose-100 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-all flex items-center justify-center gap-2 group"
-                      >
-                        <span className="material-symbols-outlined text-lg group-hover:animate-bounce">delete_sweep</span>
-                        이 그룹 수업 전체 삭제하기
-                      </button>
-                      <p className="text-[10px] text-slate-400 text-center mt-2">※ 같은 시리즈로 등록된 모든 수업이 삭제됩니다.</p>
-                    </div>
-                  )}
-                </form>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => {
+                      const d = new Date(currentWeekStart);
+                      d.setDate(d.getDate() - 7);
+                      setCurrentWeekStart(d);
+                    }} className="w-8 h-8 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition-colors">
+                      <span className="material-symbols-outlined text-lg">chevron_left</span>
+                    </button>
+                    <button onClick={() => {
+                      const d = new Date(currentWeekStart);
+                      d.setDate(d.getDate() + 7);
+                      setCurrentWeekStart(d);
+                    }} className="w-8 h-8 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition-colors">
+                      <span className="material-symbols-outlined text-lg">chevron_right</span>
+                    </button>
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100 ml-2">
+                    {currentWeekStart.getFullYear()}년 {currentWeekStart.getMonth() + 1}월
+                  </h3>
+                </div>
+                {/* 모드 전환 토글 */}
+                <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                  <button 
+                    onClick={() => { setIsSelectionMode(false); setSelectedClassIds([]); }}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${!isSelectionMode ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    수업 등록
+                  </button>
+                  <button 
+                    onClick={() => { setIsSelectionMode(true); setDraftEvent(null); setEditingClassId(null); }}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${isSelectionMode ? 'bg-white dark:bg-slate-700 text-rose-500 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    다중 선택
+                  </button>
+                </div>
               </div>
 
-              <div className="lg:col-span-2 space-y-4">
-                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-                  <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
-                    <div>
-                      <h3 className="text-lg font-bold">수업 관리 목록</h3>
-                      <p className="text-xs text-slate-400 mt-0.5">총 {classes.length}개의 수업 일정이 등록되어 있습니다.</p>
+              {/* Grid Body */}
+              <div 
+                className="flex flex-1 overflow-auto relative"
+                onMouseUp={() => {
+                  if (dragSelection) {
+                    const minIdx = Math.min(dragSelection.startIdx, dragSelection.currentIdx);
+                    const maxIdx = Math.max(dragSelection.startIdx, dragSelection.currentIdx);
+                    
+                    const hour = Math.floor(minIdx / 2);
+                    const min = (minIdx % 2) * 30;
+                    const time = `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+                    
+                    let totalDuration = (maxIdx - minIdx + 1) * 30;
+                    if (minIdx === maxIdx) totalDuration = 60; // 클릭만 했을 경우 기본 1시간
+                    
+                    if (isSelectionMode) {
+                      const targetClasses = classes.filter(c => {
+                        if (c.date !== dragSelection.date) return false;
+                        const [cH, cM] = c.time.split(':').map(Number);
+                        const cStart = cH * 60 + cM;
+                        const cEnd = cStart + (c.duration || 60);
+                        const sStart = hour * 60 + min;
+                        const sEnd = sStart + totalDuration;
+                        return cStart < sEnd && cEnd > sStart;
+                      });
+                      
+                      const targetIds = targetClasses.map(c => c.id);
+                      if (targetIds.length > 0) {
+                        setSelectedClassIds(prev => {
+                          const newSet = new Set(prev);
+                          let allSelected = targetIds.every(id => newSet.has(id));
+                          if (allSelected) {
+                            targetIds.forEach(id => newSet.delete(id));
+                          } else {
+                            targetIds.forEach(id => newSet.add(id));
+                          }
+                          return Array.from(newSet);
+                        });
+                      }
+                      setDragSelection(null);
+                      return;
+                    }
+                    
+                    // 기본 진행 시간 단위 설정 (총 시간이 30분이면 30분, 그 외는 60분 등)
+                    let baseDuration = 60;
+                    if (totalDuration === 30) baseDuration = 30;
+                    else if (totalDuration % 60 !== 0 && totalDuration < 60) baseDuration = 30;
+                    
+                    setDraftEvent({
+                      date: dragSelection.date,
+                      time,
+                      duration: baseDuration,
+                      totalSelectedDuration: totalDuration,
+                      className: '',
+                      maxCapacity: 6,
+                      recurringRule: {
+                        frequency: 'none',
+                        interval: 1,
+                        endType: 'infinite',
+                        endCount: 10,
+                        endDate: dragSelection.date,
+                        weeklyDays: [new Date(dragSelection.date).getDay()]
+                      }
+                    });
+                    setEditingClassId(null);
+                    setDragSelection(null);
+                  }
+                }}
+                onMouseLeave={() => setDragSelection(null)}
+              >
+                {/* Time Labels */}
+                <div className="w-16 shrink-0 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 sticky left-0 z-20">
+                  <div className="h-16 border-b border-slate-200 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900 z-30"></div>
+                  {Array.from({ length: 24 }).map((_, i) => (
+                    <div key={i} className="h-[60px] border-b border-slate-100 dark:border-slate-800 text-right pr-2 text-[10px] font-medium text-slate-400 relative">
+                      <span className="absolute -top-2.5 right-2 bg-white dark:bg-slate-900 px-1">
+                        {i === 0 ? '' : i < 12 ? `오전 ${i}시` : i === 12 ? '오후 12시' : `오후 ${i - 12}시`}
+                      </span>
                     </div>
-                    <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                      <button 
-                        onClick={() => setViewMode('calendar')}
-                        className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${viewMode === 'calendar' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-400'}`}
-                      >
-                        <span className="material-symbols-outlined text-sm">calendar_month</span>
-                        달력형
-                      </button>
-                      <button 
-                        onClick={() => setViewMode('list')}
-                        className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${viewMode === 'list' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-400'}`}
-                      >
-                        <span className="material-symbols-outlined text-sm">list</span>
-                        리스트형
-                      </button>
-                    </div>
-                  </div>
+                  ))}
+                </div>
 
-                  {viewMode === 'calendar' ? (
-                    <div className="p-6">
-                      {/* 달력 헤더 */}
-                      <div className="flex items-center justify-between mb-6">
-                        <h4 className="text-xl font-black text-slate-800 dark:text-slate-100">
-                          {currentMonth.getFullYear()}년 {currentMonth.getMonth() + 1}월
-                        </h4>
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() - 1)))}
-                            className="w-9 h-9 flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all"
-                          >
-                            <span className="material-symbols-outlined text-lg">chevron_left</span>
-                          </button>
-                          <button 
-                            onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() + 1)))}
-                            className="w-9 h-9 flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all"
-                          >
-                            <span className="material-symbols-outlined text-lg">chevron_right</span>
-                          </button>
+                {/* Days */}
+                <div className="flex flex-1 min-w-[700px]">
+                  {Array.from({ length: 7 }).map((_, dayIdx) => {
+                    const date = new Date(currentWeekStart);
+                    date.setDate(date.getDate() + dayIdx);
+                    const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+                    const isToday = dateStr === new Date().toLocaleDateString('sv-SE');
+                    const dayClasses = classes.filter(c => c.date === dateStr);
+                    
+                    const holidayName = koreanHolidaysMap.get(dateStr);
+                    const isHolidayOrSunday = dayIdx === 0 || !!holidayName;
+                    const dayColor = isHolidayOrSunday ? 'text-rose-500' : dayIdx === 6 ? 'text-blue-500' : 'text-slate-500';
+                    const numColor = isToday ? 'bg-primary text-white' : isHolidayOrSunday ? 'text-rose-500' : dayIdx === 6 ? 'text-blue-500' : 'text-slate-800 dark:text-slate-200';
+
+                    return (
+                      <div key={dateStr} className="flex-1 min-w-[100px] border-r border-slate-200 dark:border-slate-800 relative group">
+                        {/* Day Header */}
+                        <div className="h-16 border-b border-slate-200 dark:border-slate-800 flex flex-col items-center justify-center sticky top-0 bg-white dark:bg-slate-900 z-30">
+                          <span className={`text-[11px] font-bold ${dayColor}`}>{dayLabels[dayIdx]}</span>
+                          <span className={`text-xl font-black mt-0.5 w-8 h-8 flex items-center justify-center rounded-full ${numColor}`}>
+                            {date.getDate()}
+                          </span>
+                          {holidayName && (
+                            <span className="text-[9px] text-rose-500 font-bold bg-rose-50 dark:bg-rose-500/10 px-1 rounded-sm absolute bottom-0.5 truncate max-w-[90%]">{holidayName}</span>
+                          )}
                         </div>
-                      </div>
 
-                      {/* 달력 그리드 */}
-                      <div className="grid grid-cols-7 gap-px bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden border border-slate-100 dark:border-slate-800">
-                        {['일', '월', '화', '수', '목', '금', '토'].map((d, i) => (
-                          <div key={d} className={`bg-slate-50 dark:bg-slate-900/50 py-3 text-center text-[10px] font-black uppercase tracking-widest ${i === 0 ? 'text-rose-500' : i === 6 ? 'text-blue-500' : 'text-slate-400'}`}>
-                            {d}
-                          </div>
-                        ))}
-                        {(() => {
-                          const year = currentMonth.getFullYear();
-                          const month = currentMonth.getMonth();
-                          const firstDay = new Date(year, month, 1).getDay();
-                          const lastDate = new Date(year, month + 1, 0).getDate();
-                          const prevLastDate = new Date(year, month, 0).getDate();
-                          
-                          const cells = [];
-                          for (let i = firstDay - 1; i >= 0; i--) {
-                            cells.push({ day: prevLastDate - i, current: false, dateStr: null });
-                          }
-                          for (let i = 1; i <= lastDate; i++) {
-                            const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
-                            cells.push({ day: i, current: true, dateStr });
-                          }
-                          const remaining = 42 - cells.length;
-                          for (let i = 1; i <= remaining; i++) {
-                            cells.push({ day: i, current: false, dateStr: null });
-                          }
+                        {/* Grid Lines & Click Handlers */}
+                        <div className="relative h-[1440px]">
+                          {Array.from({ length: 48 }).map((_, i) => (
+                            <div 
+                              key={i} 
+                              onMouseDown={() => setDragSelection({ date: dateStr, startIdx: i, currentIdx: i })}
+                              onMouseEnter={() => {
+                                if (dragSelection && dragSelection.date === dateStr) {
+                                  setDragSelection(prev => prev ? { ...prev, currentIdx: i } : null);
+                                }
+                              }}
+                              className="h-[30px] border-b border-slate-100 dark:border-slate-800/50 hover:bg-primary/10 cursor-pointer transition-colors"
+                            />
+                          ))}
 
-                          return cells.map((cell, i) => {
-                            const dayClasses = cell.dateStr ? classes.filter(c => c.date === cell.dateStr) : [];
-                            const isToday = cell.dateStr === new Date().toLocaleDateString('sv-SE');
-                            const isSelected = cell.dateStr === selectedDate;
+                          {/* Drag Selection Overlay */}
+                          {dragSelection && dragSelection.date === dateStr && (
+                            <div
+                              className={`absolute left-1 right-1 rounded-md border-2 pointer-events-none z-20 ${isSelectionMode ? 'bg-blue-500/30 border-blue-500/80' : 'bg-rose-500/50 border-rose-500/80'}`}
+                              style={{
+                                top: `${Math.min(dragSelection.startIdx, dragSelection.currentIdx) * 30}px`,
+                                height: `${(Math.abs(dragSelection.currentIdx - dragSelection.startIdx) + 1) * 30}px`
+                              }}
+                            />
+                          )}
 
+                          {/* Existing Classes */}
+                          {dayClasses.map(c => {
+                            const [h, m] = c.time.split(':').map(Number);
+                            const top = h * 60 + m;
+                            const height = c.duration || 60;
+                            const isSelected = selectedClassIds.includes(c.id);
                             return (
-                              <div 
-                                key={i} 
-                                onClick={() => cell.dateStr && setSelectedDate(selectedDate === cell.dateStr ? null : cell.dateStr)}
-                                className={`min-h-[100px] bg-white dark:bg-slate-900 p-2 transition-all cursor-pointer hover:bg-primary/5 group relative ${!cell.current ? 'opacity-30 pointer-events-none' : ''} ${isSelected ? 'ring-2 ring-inset ring-primary bg-primary/5' : ''}`}
+                              <div
+                                key={c.id}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (isSelectionMode) {
+                                    setSelectedClassIds(prev => prev.includes(c.id) ? prev.filter(id => id !== c.id) : [...prev, c.id]);
+                                    return;
+                                  }
+                                  setEditingClassId(c.id);
+                                  setDraftEvent({
+                                    date: c.date,
+                                    time: c.time,
+                                    duration: c.duration || 60,
+                                    className: c.className,
+                                    maxCapacity: c.maxCapacity
+                                  });
+                                }}
+                                className={`absolute left-1 right-1 rounded-md text-white p-1.5 shadow-sm border overflow-hidden cursor-pointer hover:brightness-110 z-10 flex flex-col transition-all ${isSelected ? 'bg-primary ring-2 ring-blue-500 ring-offset-1 border-primary !z-20' : 'bg-primary/90 border-primary'}`}
+                                style={{ top: `${top}px`, height: `${height}px` }}
                               >
-                                <div className="flex justify-between items-start">
-                                  <span className={`text-xs font-bold ${isToday ? 'w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center' : (i % 7 === 0 ? 'text-rose-500' : i % 7 === 6 ? 'text-blue-500' : 'text-slate-500')}`}>
-                                    {cell.day}
-                                  </span>
-                                  {dayClasses.length > 0 && (
-                                    <span className="text-[10px] font-black text-primary px-1.5 py-0.5 bg-primary/10 rounded-md">
-                                      {dayClasses.length}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="mt-2 space-y-1">
-                                  {dayClasses.slice(0, 3).map((c, idx) => (
-                                    <div key={idx} className="text-[9px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 truncate font-medium">
-                                      {c.time} {c.className}
-                                    </div>
-                                  ))}
-                                  {dayClasses.length > 3 && (
-                                    <div className="text-[9px] text-slate-400 pl-1 font-bold">
-                                      외 {dayClasses.length - 3}개...
-                                    </div>
-                                  )}
-                                </div>
+                                {isSelected && (
+                                  <div className="absolute top-1 right-1 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center shadow-sm">
+                                    <span className="material-symbols-outlined text-[10px] text-white font-bold">check</span>
+                                  </div>
+                                )}
+                                <p className={`text-xs font-bold leading-tight line-clamp-2 ${isSelected ? 'pr-4' : ''}`}>{c.className}</p>
+                                <p className="text-[9px] opacity-90 mt-0.5">{c.time} ({height}분)</p>
+                                <p className="text-[9px] opacity-90">{c.currentCapacity}/{c.maxCapacity}명</p>
                               </div>
                             );
-                          });
-                        })()}
-                      </div>
-                      
-                      {selectedDate && (
-                        <div className="mt-6 p-4 bg-primary/5 border border-primary/10 rounded-2xl animate-in fade-in slide-in-from-top-2 duration-300 relative">
-                            <div className="flex items-center gap-3 mb-3">
-                              <h5 className="text-sm font-bold text-primary flex items-center gap-2">
-                                <span className="material-symbols-outlined text-sm">event</span>
-                                {selectedDate} 수업 상세 내역
-                              </h5>
-                              
-                              {isSelectionMode && (
-                                <div className="flex items-center gap-2 ml-2 pr-2 border-r border-slate-200">
-                                  <button
-                                    onClick={() => {
-                                      const classesOnDate = classes.filter(c => c.date === selectedDate);
-                                      const allIdsOnDate = classesOnDate.map(c => c.id);
-                                      const isAllSelected = allIdsOnDate.every(id => selectedClassIds.includes(id));
-                                      
-                                      if (isAllSelected) {
-                                        setSelectedClassIds(prev => prev.filter(id => !allIdsOnDate.includes(id)));
-                                      } else {
-                                        setSelectedClassIds(prev => Array.from(new Set([...prev, ...allIdsOnDate])));
-                                      }
-                                    }}
-                                    className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-slate-100 transition-colors group"
-                                  >
-                                    <div className={`w-4 h-4 rounded border flex items-center justify-center transition-all ${
-                                      classes.filter(c => c.date === selectedDate).every(c => selectedClassIds.includes(c.id))
-                                        ? 'bg-primary border-primary text-white' 
-                                        : 'border-slate-300 bg-white group-hover:border-primary'
-                                    }`}>
-                                      {classes.filter(c => c.date === selectedDate).every(c => selectedClassIds.includes(c.id)) && (
-                                        <span className="material-symbols-outlined text-[10px] font-black">check</span>
-                                      )}
-                                    </div>
-                                    <span className="text-[11px] font-bold text-slate-600">전체 선택</span>
-                                  </button>
-                                </div>
-                              )}
-                              
-                              <button 
-                                onClick={() => {
-                                  if (isSelectionMode) {
-                                    handleBulkDelete();
-                                  } else {
-                                    setIsSelectionMode(true);
-                                    setActiveActionMenu(null);
-                                  }
-                                }}
-                                className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 ${
-                                  isSelectionMode 
-                                    ? 'bg-rose-500 text-white hover:bg-rose-600 shadow-md shadow-rose-500/20' 
-                                    : 'bg-white border border-slate-200 text-slate-500 hover:border-rose-500 hover:text-rose-500'
-                                }`}
-                              >
-                                <span className="material-symbols-outlined text-xs">{isSelectionMode ? 'check' : 'delete_sweep'}</span>
-                                {isSelectionMode ? '삭제 완료' : '선택 삭제'}
-                              </button>
-                              
-                              {isSelectionMode && (
-                                <button 
-                                  onClick={() => {
-                                    setIsSelectionMode(false);
-                                    setSelectedClassIds([]);
-                                  }}
-                                  className="text-[10px] text-slate-400 hover:text-slate-600 font-bold underline"
-                                >
-                                  취소
-                                </button>
-                              )}
+                          })}
 
-                              <button onClick={() => { setSelectedDate(null); setActiveActionMenu(null); setIsSelectionMode(false); }} className="ml-auto text-slate-400 hover:text-rose-500">
-                                <span className="material-symbols-outlined text-lg">close</span>
-                              </button>
-                            </div>
-                            
-                            {activeActionMenu && (
-                              <div className="absolute top-4 right-12 z-50 animate-in fade-in zoom-in-95 slide-in-from-right-4 duration-300">
-                                <div className="bg-white dark:bg-slate-800 shadow-2xl rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden flex items-stretch">
-                                  <div className={`w-1.5 ${activeActionMenu.type === 'edit' ? 'bg-primary' : 'bg-rose-500'}`}></div>
-                                  <div className="px-4 py-2 flex items-center gap-4">
-                                    <span className="text-[11px] font-black text-slate-400 uppercase tracking-tighter">
-                                      {activeActionMenu.type === 'edit' ? '수정 선택' : '삭제 선택'}
-                                    </span>
-                                    <div className="flex gap-1">
-                                      <button 
-                                        onClick={() => {
-                                          const c = classes.find(cls => cls.id === activeActionMenu.id);
-                                          if (activeActionMenu.type === 'edit') startEditing(c, false);
-                                          else handleDeleteClass(c.id);
-                                          setActiveActionMenu(null);
-                                        }}
-                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
-                                          activeActionMenu.type === 'edit' 
-                                            ? 'bg-primary/10 text-primary hover:bg-primary hover:text-white' 
-                                            : 'bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white'
-                                        }`}
-                                      >
-                                        <span className="material-symbols-outlined text-sm">{activeActionMenu.type === 'edit' ? 'person' : 'delete'}</span>
-                                        단일 {activeActionMenu.type === 'edit' ? '수정' : '삭제'}
-                                      </button>
-                                      <button 
-                                        onClick={() => {
-                                          const c = classes.find(cls => cls.id === activeActionMenu.id);
-                                          if (activeActionMenu.type === 'edit') startEditing(c, true);
-                                          else handleDeleteSeries(c.groupId || 'legacy', c.className);
-                                          setActiveActionMenu(null);
-                                        }}
-                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
-                                          activeActionMenu.type === 'edit' 
-                                            ? 'bg-primary/10 text-primary hover:bg-primary hover:text-white' 
-                                            : 'bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white'
-                                        }`}
-                                      >
-                                        <span className="material-symbols-outlined text-sm">{activeActionMenu.type === 'edit' ? 'groups' : 'delete_sweep'}</span>
-                                        전체 {activeActionMenu.type === 'edit' ? '수정' : '삭제'}
-                                      </button>
-                                      <button 
-                                        onClick={() => setActiveActionMenu(null)}
-                                        className="p-1.5 text-slate-300 hover:text-slate-500 transition-colors"
-                                      >
-                                        <span className="material-symbols-outlined text-sm">close</span>
-                                      </button>
+                          {/* Draft Event (Creating / Editing) */}
+                          {draftEvent && draftEvent.date === dateStr && (
+                            <div
+                              className="absolute left-1 right-1 rounded-md bg-rose-500/90 text-white p-1.5 shadow-lg border border-rose-600 overflow-visible z-40"
+                              style={{
+                                top: `${Number(draftEvent.time.split(':')[0]) * 60 + Number(draftEvent.time.split(':')[1])}px`,
+                                height: `${draftEvent.totalSelectedDuration}px`
+                              }}
+                            >
+                              <p className="text-xs font-bold truncate">{draftEvent.className || '(제목 없음)'}</p>
+                              <p className="text-[9px] opacity-90 mt-0.5">{draftEvent.time} (총 {draftEvent.totalSelectedDuration}분)</p>
+                              {!editingClassId && Math.floor(draftEvent.totalSelectedDuration / draftEvent.duration) > 1 && (
+                                <p className="text-[9.5px] font-bold text-yellow-200 mt-0.5 leading-tight">
+                                  {draftEvent.duration}분씩 {Math.floor(draftEvent.totalSelectedDuration / draftEvent.duration)}개 연속 생성
+                                </p>
+                              )}
+                              
+                              {/* Popover Form (Desktop: Side floating, Mobile: Center fixed) */}
+                              <div className={`fixed inset-0 sm:absolute sm:inset-auto sm:-top-4 ${dayIdx >= 4 ? 'sm:right-full sm:mr-2' : 'sm:left-full sm:ml-2'} bg-black/40 sm:bg-transparent z-50 flex items-center justify-center p-4`}
+                                   onClick={(e) => { e.stopPropagation(); setDraftEvent(null); setEditingClassId(null); }}>
+                                <div className="w-full max-w-[320px] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 p-5 text-slate-800 dark:text-slate-200 animate-in fade-in zoom-in-95 duration-200"
+                                     onClick={e => e.stopPropagation()}>
+                                  
+                                  <div className="flex justify-between items-center mb-4">
+                                    <h4 className="font-bold text-sm flex items-center gap-1.5">
+                                      <span className="material-symbols-outlined text-rose-500">event_note</span>
+                                      {editingClassId ? '수업 정보 수정' : '새 수업 추가'}
+                                    </h4>
+                                    <button type="button" onClick={() => { setDraftEvent(null); setEditingClassId(null); }} className="text-slate-400 hover:text-slate-600 transition-colors">
+                                      <span className="material-symbols-outlined">close</span>
+                                    </button>
+                                  </div>
+                                  
+                                  <div className="space-y-4">
+                                    <input 
+                                      type="text" 
+                                      placeholder="수업 이름 추가" 
+                                      className="w-full text-lg border-b-2 border-slate-200 dark:border-slate-700 bg-transparent focus:border-rose-500 outline-none pb-1 font-bold placeholder-slate-400 transition-colors"
+                                      value={draftEvent.className}
+                                      onChange={e => setDraftEvent({ ...draftEvent, className: e.target.value })}
+                                      autoFocus
+                                    />
+                                    
+                                    <div className="flex items-center gap-3 text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                                      <span className="material-symbols-outlined text-slate-400">schedule</span>
+                                      <div className="flex-1 flex items-center gap-2">
+                                        <input 
+                                          type="time" 
+                                          value={draftEvent.time}
+                                          onChange={e => setDraftEvent({ ...draftEvent, time: e.target.value })}
+                                          className="bg-transparent font-medium focus:outline-none w-[70px] text-center"
+                                        />
+                                        <span className="text-slate-300">-</span>
+                                        <select 
+                                          value={draftEvent.duration}
+                                          onChange={e => setDraftEvent({ ...draftEvent, duration: Number(e.target.value) })}
+                                          className="bg-transparent font-medium focus:outline-none cursor-pointer flex-1"
+                                        >
+                                          <option value={30}>30분</option>
+                                          <option value={60}>1시간</option>
+                                          <option value={90}>1시간 30분</option>
+                                          <option value={120}>2시간</option>
+                                        </select>
+                                      </div>
                                     </div>
+
+                                    {!editingClassId && Math.floor(draftEvent.totalSelectedDuration / draftEvent.duration) > 1 && (
+                                      <div className="text-[11px] text-primary bg-primary/10 px-3 py-2 rounded-xl flex items-center gap-1.5 font-bold animate-in fade-in zoom-in-95 duration-200">
+                                        <span className="material-symbols-outlined text-[14px]">info</span>
+                                        선택한 {draftEvent.totalSelectedDuration}분 동안 {draftEvent.duration}분씩 총 {Math.floor(draftEvent.totalSelectedDuration / draftEvent.duration)}개의 연속 수업이 생성됩니다.
+                                      </div>
+                                    )}
+
+                                    <div className="flex items-center gap-3 text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                                      <span className="material-symbols-outlined text-slate-400">group</span>
+                                      <span className="font-bold whitespace-nowrap text-xs">최대 정원</span>
+                                      <div className="flex gap-1.5 flex-wrap justify-end flex-1">
+                                        {[1, 2, 3, 4, 5, 6].map(n => (
+                                          <button
+                                            key={n}
+                                            type="button"
+                                            onClick={() => setDraftEvent({ ...draftEvent, maxCapacity: n })}
+                                            className={`w-7 h-7 rounded-lg text-xs font-black transition-all ${draftEvent.maxCapacity === n ? 'bg-rose-500 text-white shadow-md shadow-rose-500/20' : 'bg-white border border-slate-200 dark:bg-slate-700 dark:border-slate-600 text-slate-500 hover:border-rose-300 hover:text-rose-500'}`}
+                                          >
+                                            {n}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                    
+                                    {/* 연속 일정(반복) 옵션 (신규 생성 시에만 표시) */}
+                                    {!editingClassId && draftEvent.recurringRule && (
+                                      <div className="text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                                        <div className="flex items-center gap-3 mb-2">
+                                          <span className="material-symbols-outlined text-slate-400">event_repeat</span>
+                                          <span className="font-bold whitespace-nowrap text-xs">반복 설정</span>
+                                          <div className="flex-1 text-right">
+                                            <select 
+                                              value={draftEvent.recurringRule.frequency}
+                                              onChange={e => setDraftEvent({...draftEvent, recurringRule: { ...draftEvent.recurringRule!, frequency: e.target.value as any }})}
+                                              className="bg-transparent font-medium text-xs focus:outline-none cursor-pointer text-slate-700 dark:text-slate-300 text-right w-full"
+                                            >
+                                              <option value="none">반복 안함</option>
+                                              <option value="daily">매일</option>
+                                              <option value="weekly">매주</option>
+                                              <option value="monthly">매월</option>
+                                              <option value="yearly">매년</option>
+                                            </select>
+                                          </div>
+                                        </div>
+                                        
+                                        {draftEvent.recurringRule.frequency === 'weekly' && (
+                                          <div className="flex justify-between mt-2 pt-3 border-t border-slate-200 dark:border-slate-700">
+                                            {['일', '월', '화', '수', '목', '금', '토'].map((label, idx) => {
+                                              const currentDays = draftEvent.recurringRule!.weeklyDays;
+                                              const isSelected = currentDays.includes(idx);
+                                              return (
+                                                <button
+                                                  key={idx}
+                                                  type="button"
+                                                  onClick={() => {
+                                                    let newDays = [...currentDays];
+                                                    if (isSelected) {
+                                                      if (newDays.length > 1) newDays = newDays.filter(d => d !== idx);
+                                                    } else {
+                                                      newDays.push(idx);
+                                                      newDays.sort();
+                                                    }
+                                                    setDraftEvent({ ...draftEvent, recurringRule: { ...draftEvent.recurringRule!, weeklyDays: newDays } });
+                                                  }}
+                                                  className={`w-7 h-7 rounded-full text-[10px] font-bold transition-all ${
+                                                    isSelected ? 'bg-primary text-white shadow-md shadow-primary/20' : 'bg-white border border-slate-200 dark:bg-slate-700 dark:border-slate-600 text-slate-400 hover:border-primary/50 hover:text-primary'
+                                                  }`}
+                                                >
+                                                  {label}
+                                                </button>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+
+                                        {draftEvent.recurringRule.frequency !== 'none' && (
+                                          <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                                            <p className="text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-wider">종료 조건</p>
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                              <input type="radio" name="endType" value="infinite" checked={draftEvent.recurringRule.endType === 'infinite'} onChange={() => setDraftEvent({ ...draftEvent, recurringRule: { ...draftEvent.recurringRule!, endType: 'infinite' } })} className="accent-primary" />
+                                              <span className="text-xs font-medium">계속 반복 <span className="text-[10px] text-slate-400 font-normal">(최대 1년치 자동 생성)</span></span>
+                                            </label>
+                                            <label className="flex items-center gap-2 cursor-pointer mt-1.5">
+                                              <input type="radio" name="endType" value="count" checked={draftEvent.recurringRule.endType === 'count'} onChange={() => setDraftEvent({ ...draftEvent, recurringRule: { ...draftEvent.recurringRule!, endType: 'count' } })} className="accent-primary" />
+                                              <span className="text-xs font-medium">일정 반복 횟수</span>
+                                              {draftEvent.recurringRule.endType === 'count' && (
+                                                <input type="number" min={1} max={365} value={draftEvent.recurringRule.endCount} onChange={e => setDraftEvent({ ...draftEvent, recurringRule: { ...draftEvent.recurringRule!, endCount: Math.max(1, Number(e.target.value)) } })} className="w-16 ml-auto px-2 py-1 text-xs border border-slate-200 rounded-md dark:bg-slate-700 dark:border-slate-600 text-right focus:outline-none focus:border-primary font-bold" />
+                                              )}
+                                            </label>
+                                            <label className="flex items-center gap-2 cursor-pointer mt-1.5">
+                                              <input type="radio" name="endType" value="until" checked={draftEvent.recurringRule.endType === 'until'} onChange={() => setDraftEvent({ ...draftEvent, recurringRule: { ...draftEvent.recurringRule!, endType: 'until' } })} className="accent-primary" />
+                                              <span className="text-xs font-medium">종료 날짜 지정</span>
+                                              {draftEvent.recurringRule.endType === 'until' && (
+                                                <input type="date" value={draftEvent.recurringRule.endDate} onChange={e => setDraftEvent({ ...draftEvent, recurringRule: { ...draftEvent.recurringRule!, endDate: e.target.value } })} className="ml-auto px-2 py-1 text-xs border border-slate-200 rounded-md dark:bg-slate-700 dark:border-slate-600 focus:outline-none focus:border-primary font-bold text-slate-600 dark:text-slate-300" />
+                                              )}
+                                            </label>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                  
+                                  <div className="mt-6 flex justify-end gap-2">
+                                    {editingClassId && (
+                                      <button 
+                                        type="button" 
+                                        onClick={() => {
+                                          handleDeleteClass(editingClassId);
+                                          setDraftEvent(null);
+                                          setEditingClassId(null);
+                                        }}
+                                        className="px-4 py-2.5 rounded-xl text-rose-500 text-sm font-bold hover:bg-rose-50 dark:hover:bg-rose-900/20 mr-auto transition-colors"
+                                      >
+                                        삭제
+                                      </button>
+                                    )}
+                                    <button 
+                                      type="button" 
+                                      onClick={() => handleSaveDraftEvent()}
+                                      className="flex-1 px-6 py-2.5 rounded-xl bg-rose-500 text-white text-sm font-bold shadow-md shadow-rose-500/20 hover:bg-rose-600 active:scale-95 transition-all disabled:opacity-50"
+                                      disabled={isRegistering}
+                                    >
+                                      {isRegistering ? '저장 중...' : '저장'}
+                                    </button>
                                   </div>
                                 </div>
                               </div>
-                            )}
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                              {classes.filter(c => c.date === selectedDate).map(c => {
-                                const classRes = allReservations.filter(r => r.classId === c.id && r.status === 'CONFIRMED');
-                                const isFull = c.currentCapacity >= c.maxCapacity;
-
-                                return (
-                                  <div 
-                                    key={c.id} 
-                                    onClick={() => {
-                                      if (isSelectionMode) {
-                                        setSelectedClassIds(prev => 
-                                          prev.includes(c.id) ? prev.filter(id => id !== c.id) : [...prev, c.id]
-                                        );
-                                      }
-                                    }}
-                                    className={`flex flex-col p-4 rounded-xl border transition-all relative ${
-                                      isSelectionMode && selectedClassIds.includes(c.id) 
-                                        ? 'border-rose-500 bg-rose-50/30' 
-                                        : isFull ? 'bg-rose-50/50 border-rose-100' : 'bg-white border-slate-100 shadow-sm'
-                                    } ${isSelectionMode ? 'cursor-pointer' : ''} dark:bg-slate-800 dark:border-slate-800`}
-                                  >
-                                    <div className="flex items-center justify-between mb-2">
-                                      <div className="flex items-center gap-3">
-                                        {isSelectionMode && (
-                                          <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
-                                            selectedClassIds.includes(c.id) ? 'bg-rose-500 border-rose-500 text-white' : 'border-slate-200 bg-white'
-                                          }`}>
-                                            {selectedClassIds.includes(c.id) && <span className="material-symbols-outlined text-xs">check</span>}
-                                          </div>
-                                        )}
-                                        <span className={`text-xs font-black px-2 py-1 rounded-lg ${isFull ? 'bg-rose-500 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-400'}`}>
-                                          {c.time}
-                                        </span>
-                                        <span className="text-sm font-bold">{c.className}</span>
-                                        {isFull && <span className="text-[10px] font-bold text-rose-500 border border-rose-200 px-1.5 py-0.5 rounded">마감</span>}
-                                      </div>
-                                      {!isSelectionMode && (
-                                        <div className="flex items-center gap-1">
-                                          <button 
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              setActiveActionMenu({ id: c.id, type: 'edit' });
-                                            }}
-                                            className={`p-1.5 rounded-lg transition-all ${activeActionMenu?.id === c.id && activeActionMenu?.type === 'edit' ? 'bg-primary text-white shadow-md' : 'text-slate-300 hover:bg-primary/10 hover:text-primary'}`}
-                                          >
-                                            <span className="material-symbols-outlined text-sm">edit</span>
-                                          </button>
-                                          <button 
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              setActiveActionMenu({ id: c.id, type: 'delete' });
-                                            }}
-                                            className={`p-1.5 rounded-lg transition-all ${activeActionMenu?.id === c.id && activeActionMenu?.type === 'delete' ? 'bg-rose-500 text-white shadow-md' : 'text-slate-300 hover:bg-rose-50 hover:text-rose-500'}`}
-                                          >
-                                            <span className="material-symbols-outlined text-sm">delete</span>
-                                          </button>
-                                        </div>
-                                      )}
-                                    </div>
-                                    
-                                    <div className="flex items-center justify-between">
-                                      <div className="flex flex-wrap gap-1">
-                                        {classRes.length > 0 ? classRes.map((r, i) => (
-                                          <span key={i} className="text-[11px] font-medium text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-900 px-2 py-0.5 rounded-md flex items-center gap-1">
-                                            <span className="material-symbols-outlined text-[12px]">person</span>
-                                            {r.userName}
-                                          </span>
-                                        )) : (
-                                          <span className="text-[11px] text-slate-400 italic">예약자 없음</span>
-                                        )}
-                                      </div>
-                                      <span className={`text-xs font-bold ${isFull ? 'text-rose-500' : 'text-primary'}`}>
-                                        {isFull ? '[예약 완료]' : `${c.currentCapacity}/${c.maxCapacity}명`}
-                                      </span>
-                                    </div>
-                                  </div>
-                                );
-                              })}
                             </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="p-0 relative">
-                      {/* 플로팅 액션 메뉴 (달력형과 동일 UI) */}
-                      {activeActionMenu && (
-                        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 w-[95%] animate-in fade-in zoom-in-95 duration-200">
-                          <div className="bg-white dark:bg-slate-800 shadow-2xl rounded-2xl border-2 border-primary/20 p-2 flex items-center justify-between gap-4">
-                            <div className="flex items-center gap-3 ml-2">
-                              <div className={`w-1.5 h-8 rounded-full ${activeActionMenu.type === 'edit' ? 'bg-primary' : 'bg-rose-500'}`} />
-                              <span className="text-xs font-black text-slate-700 dark:text-slate-200">
-                                {activeActionMenu.type === 'edit' ? '수정 선택' : '삭제 선택'}
-                              </span>
-                            </div>
-                            
-                            <div className="flex items-center gap-1.5">
-                              <button 
-                                onClick={() => {
-                                  const c = classes.find(cls => cls.id === activeActionMenu.id);
-                                  if (activeActionMenu.type === 'edit') startEditing(c, false);
-                                  else handleDeleteClass(c.id);
-                                  setActiveActionMenu(null);
-                                }}
-                                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
-                                  activeActionMenu.type === 'edit' 
-                                    ? 'bg-primary/10 text-primary hover:bg-primary hover:text-white' 
-                                    : 'bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white'
-                                }`}
-                              >
-                                <span className="material-symbols-outlined text-sm">{activeActionMenu.type === 'edit' ? 'person' : 'delete'}</span>
-                                단일 {activeActionMenu.type === 'edit' ? '수정' : '삭제'}
-                              </button>
-                              
-                              <button 
-                                onClick={() => {
-                                  const c = classes.find(cls => cls.id === activeActionMenu.id);
-                                  if (activeActionMenu.type === 'edit') startEditing(c, true);
-                                  else handleDeleteSeries(c.groupId || 'legacy', c.className);
-                                  setActiveActionMenu(null);
-                                }}
-                                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
-                                  activeActionMenu.type === 'edit' 
-                                    ? 'bg-primary/10 text-primary hover:bg-primary hover:text-white' 
-                                    : 'bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white'
-                                }`}
-                              >
-                                <span className="material-symbols-outlined text-sm">{activeActionMenu.type === 'edit' ? 'groups' : 'delete_sweep'}</span>
-                                전체 {activeActionMenu.type === 'edit' ? '수정' : '삭제'}
-                              </button>
-                              
-                              <button 
-                                onClick={() => setActiveActionMenu(null)}
-                                className="p-2 text-slate-300 hover:text-slate-500 transition-colors"
-                              >
-                                <span className="material-symbols-outlined">close</span>
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* 필터 도구 바 */}
-                      <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-900">
-                        <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-fit">
-                          <button 
-                            onClick={() => { setClassStatusFilter('all'); setActiveActionMenu(null); }}
-                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${classStatusFilter === 'all' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                          >
-                            전체 {classes.length}
-                          </button>
-                          <button 
-                            onClick={() => { setClassStatusFilter('upcoming'); setActiveActionMenu(null); }}
-                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${classStatusFilter === 'upcoming' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                          >
-                            진행 예정 {classes.filter(c => {
-                              const now = new Date();
-                              const cDate = new Date(`${c.date}T${c.time}`);
-                              return cDate >= now;
-                            }).length}
-                          </button>
-                          <button 
-                            onClick={() => { setClassStatusFilter('completed'); setActiveActionMenu(null); }}
-                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${classStatusFilter === 'completed' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                          >
-                            수강 완료 {classes.filter(c => {
-                              const now = new Date();
-                              const cDate = new Date(`${c.date}T${c.time}`);
-                              return cDate < now;
-                            }).length}
-                          </button>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <button 
-                            onClick={() => {
-                              if (isSelectionMode) {
-                                if (selectedClassIds.length > 0) handleBulkDelete();
-                                else alert('삭제할 수업을 먼저 선택해주세요.');
-                              } else {
-                                setIsSelectionMode(true);
-                                setSelectedClassIds([]);
-                                setActiveActionMenu(null);
-                              }
-                            }}
-                            className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 ${
-                              isSelectionMode 
-                                ? (selectedClassIds.length > 0 ? 'bg-rose-500 text-white shadow-md' : 'bg-slate-100 text-slate-400')
-                                : 'bg-white border border-slate-200 text-slate-500 hover:border-rose-500 hover:text-rose-500'
-                            }`}
-                          >
-                            <span className="material-symbols-outlined text-xs">{isSelectionMode ? 'check' : 'delete_sweep'}</span>
-                            {isSelectionMode ? `삭제 완료 (${selectedClassIds.length})` : '선택 삭제'}
-                          </button>
-
-                          {isSelectionMode && (
-                            <button onClick={() => { setIsSelectionMode(false); setSelectedClassIds([]); }} className="text-[10px] text-slate-400 font-bold underline px-2">취소</button>
                           )}
                         </div>
                       </div>
-
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left">
-                          <thead className="bg-slate-50 dark:bg-slate-800 text-xs font-bold uppercase text-slate-500">
-                            <tr>
-                              {isSelectionMode && (
-                                <th className="px-6 py-4 w-10">
-                                  <div 
-                                    onClick={() => {
-                                      const filtered = classes.filter(c => {
-                                        const now = new Date();
-                                        const cDate = new Date(`${c.date}T${c.time}`);
-                                        if (classStatusFilter === 'upcoming') return cDate >= now;
-                                        if (classStatusFilter === 'completed') return cDate < now;
-                                        return true;
-                                      });
-                                      const allIds = filtered.map(c => c.id);
-                                      const isAllSelected = allIds.length > 0 && allIds.every(id => selectedClassIds.includes(id));
-                                      if (isAllSelected) setSelectedClassIds(prev => prev.filter(id => !allIds.includes(id)));
-                                      else setSelectedClassIds(prev => Array.from(new Set([...prev, ...allIds])));
-                                    }}
-                                    className={`w-5 h-5 rounded border-2 flex items-center justify-center cursor-pointer transition-all ${
-                                      classes.filter(c => {
-                                        const now = new Date();
-                                        const cDate = new Date(`${c.date}T${c.time}`);
-                                        if (classStatusFilter === 'upcoming') return cDate >= now;
-                                        if (classStatusFilter === 'completed') return cDate < now;
-                                        return true;
-                                      }).every(c => selectedClassIds.includes(c.id)) && classes.filter(c => {
-                                        const now = new Date();
-                                        const cDate = new Date(`${c.date}T${c.time}`);
-                                        if (classStatusFilter === 'upcoming') return cDate >= now;
-                                        if (classStatusFilter === 'completed') return cDate < now;
-                                        return true;
-                                      }).length > 0
-                                        ? 'bg-primary border-primary text-white' : 'border-slate-200 bg-white'
-                                    }`}
-                                  >
-                                    {classes.filter(c => {
-                                      const now = new Date();
-                                      const cDate = new Date(`${c.date}T${c.time}`);
-                                      if (classStatusFilter === 'upcoming') return cDate >= now;
-                                      if (classStatusFilter === 'completed') return cDate < now;
-                                      return true;
-                                    }).every(c => selectedClassIds.includes(c.id)) && classes.filter(c => {
-                                      const now = new Date();
-                                      const cDate = new Date(`${c.date}T${c.time}`);
-                                      if (classStatusFilter === 'upcoming') return cDate >= now;
-                                      if (classStatusFilter === 'completed') return cDate < now;
-                                      return true;
-                                    }).length > 0 && <span className="material-symbols-outlined text-xs">check</span>}
-                                  </div>
-                                </th>
-                              )}
-                              <th className="px-6 py-4">상태</th>
-                              <th className="px-6 py-4">수업명</th>
-                              <th className="px-6 py-4">날짜</th>
-                              <th className="px-6 py-4">시간</th>
-                              <th className="px-6 py-4">인원</th>
-                              <th className="px-6 py-4 text-right">관리</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-sm">
-                            {classes
-                              .filter(c => {
-                                const now = new Date();
-                                const cDate = new Date(`${c.date}T${c.time}`);
-                                if (classStatusFilter === 'upcoming') return cDate >= now;
-                                if (classStatusFilter === 'completed') return cDate < now;
-                                return true;
-                              })
-                              .map(c => {
-                                const now = new Date();
-                                const cDate = new Date(`${c.date}T${c.time}`);
-                                const isCompleted = cDate < now;
-
-                                return (
-                                  <tr 
-                                    key={c.id} 
-                                    onClick={() => {
-                                      if (isSelectionMode) {
-                                        setSelectedClassIds(prev => prev.includes(c.id) ? prev.filter(id => id !== c.id) : [...prev, c.id]);
-                                      }
-                                    }}
-                                    className={`transition-colors ${
-                                      isSelectionMode 
-                                        ? (selectedClassIds.includes(c.id) ? 'bg-rose-50/50 dark:bg-rose-500/10 cursor-pointer' : 'hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer')
-                                        : 'hover:bg-slate-50 dark:hover:bg-slate-800'
-                                    }`}
-                                  >
-                                    {isSelectionMode && (
-                                      <td className="px-6 py-4">
-                                        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
-                                          selectedClassIds.includes(c.id) ? 'bg-rose-500 border-rose-500 text-white' : 'border-slate-200 bg-white'
-                                        }`}>
-                                          {selectedClassIds.includes(c.id) && <span className="material-symbols-outlined text-xs">check</span>}
-                                        </div>
-                                      </td>
-                                    )}
-                                    <td className="px-6 py-4">
-                                      <span className={`text-[10px] font-black px-2 py-1 rounded-md ${isCompleted ? 'bg-slate-100 text-slate-400' : 'bg-primary/10 text-primary'}`}>
-                                        {isCompleted ? '수강 완료' : '진행 예정'}
-                                      </span>
-                                    </td>
-                                    <td className="px-6 py-4">
-                                      <span className={`font-bold transition-colors ${selectedClassIds.includes(c.id) ? 'text-rose-600' : (isCompleted ? 'text-slate-400' : 'text-primary')}`}>
-                                        {c.className || '-'}
-                                      </span>
-                                    </td>
-                                    <td className="px-6 py-4"><span className={`font-bold ${isCompleted ? 'text-slate-400' : ''}`}>{c.date}</span></td>
-                                    <td className="px-6 py-4">
-                                      <span className={`font-medium ${isCompleted ? 'text-slate-400' : ''}`}>{c.time}</span>
-                                      {c.endTime && <span className="text-slate-400"> ~ {c.endTime}</span>}
-                                      <span className="text-[10px] text-slate-400 ml-1">({c.duration || 60}분)</span>
-                                    </td>
-                                    <td className="px-6 py-4 font-medium text-slate-500">{c.currentCapacity}/{c.maxCapacity}명</td>
-                                    <td className="px-6 py-4 text-right">
-                                      {!isSelectionMode && (
-                                        <div className="flex justify-end gap-1.5" onClick={e => e.stopPropagation()}>
-                                          <button 
-                                            onClick={() => setActiveActionMenu({ id: c.id, type: 'edit' })}
-                                            className={`p-1.5 rounded-lg transition-all ${activeActionMenu?.id === c.id && activeActionMenu?.type === 'edit' ? 'bg-primary text-white shadow-md' : 'text-slate-300 hover:text-primary hover:bg-primary/10'}`}
-                                          >
-                                            <span className="material-symbols-outlined text-sm">edit</span>
-                                          </button>
-                                          <button 
-                                            onClick={() => setActiveActionMenu({ id: c.id, type: 'delete' })}
-                                            className={`p-1.5 rounded-lg transition-all ${activeActionMenu?.id === c.id && activeActionMenu?.type === 'delete' ? 'bg-rose-500 text-white shadow-md' : 'text-slate-300 hover:text-rose-500 hover:bg-rose-50'}`}
-                                          >
-                                            <span className="material-symbols-outlined text-sm">delete</span>
-                                          </button>
-                                        </div>
-                                      )}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            {classes.filter(c => {
-                                const now = new Date();
-                                const cDate = new Date(`${c.date}T${c.time}`);
-                                if (classStatusFilter === 'upcoming') return cDate >= now;
-                                if (classStatusFilter === 'completed') return cDate < now;
-                                return true;
-                              }).length === 0 && <tr><td colSpan={isSelectionMode ? 7 : 6} className="px-6 py-20 text-center text-slate-400">해당하는 수업이 없습니다.</td></tr>}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
+                    );
+                  })}
                 </div>
               </div>
+              
+              {/* Floating Action Bar */}
+              {isSelectionMode && selectedClassIds.length > 0 && activeTab === 'classes' && (
+                <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-slate-800 dark:bg-slate-100 text-white dark:text-slate-900 px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-6 animate-in slide-in-from-bottom-10 z-50">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center">
+                      <span className="material-symbols-outlined text-sm font-bold text-white">check</span>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-400 dark:text-slate-500 font-bold">다중 선택 모드</p>
+                      <p className="text-sm font-black"><span className="text-blue-400">{selectedClassIds.length}개</span>의 수업 선택됨</p>
+                    </div>
+                  </div>
+                  <div className="h-8 w-px bg-slate-700 dark:bg-slate-300"></div>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setSelectedClassIds([])}
+                      className="px-4 py-2 rounded-xl text-sm font-bold text-slate-300 dark:text-slate-600 hover:bg-slate-700 dark:hover:bg-slate-200 transition-colors"
+                    >
+                      선택 취소
+                    </button>
+                    <button 
+                      onClick={handleBulkDelete}
+                      className="px-4 py-2 rounded-xl text-sm font-bold bg-rose-500 text-white hover:bg-rose-600 shadow-lg shadow-rose-500/30 transition-all flex items-center gap-2"
+                    >
+                      <span className="material-symbols-outlined text-sm">delete</span>
+                      일괄 삭제
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -2136,6 +1766,7 @@ const BusinessDashboard = () => {
                     <tr>
                       <th className="px-6 py-4">회원 정보</th>
                       <th className="px-6 py-4">잔여 수강권</th>
+                      <th className="px-6 py-4">접속 통계</th>
                       <th className="px-6 py-4">마지막 신청 수업</th>
                       <th className="px-6 py-4">상태</th>
                       <th className="px-6 py-4 text-right">관리</th>
@@ -2160,6 +1791,16 @@ const BusinessDashboard = () => {
                         </td>
                         <td className="px-6 py-4">
                           <span className="font-bold text-primary">{member.tickets || 0}회</span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                              누적 {member.loginCount || 0}회
+                            </span>
+                            <span className="text-[10px] text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full inline-block w-fit">
+                              평균 {formatAverageLoginTime(member.avgLoginTimeMinutes)}
+                            </span>
+                          </div>
                         </td>
                         <td className="px-6 py-4">
                           <p className="font-medium">{member.classDate} {member.classTime}</p>
@@ -2354,7 +1995,29 @@ const BusinessDashboard = () => {
 
               {/* 모달 컨텐츠 */}
               <div className="p-6 space-y-6">
-                {/* 회원 상세 정보 카드 */}
+                {/* 탭 네비게이션 */}
+                <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+                  <button 
+                    onClick={() => setMemberModalTab('info')}
+                    className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${memberModalTab === 'info' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    상세 정보
+                  </button>
+                  <button 
+                    onClick={() => setMemberModalTab('reservations')}
+                    className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${memberModalTab === 'reservations' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    수강 이력
+                  </button>
+                  <button 
+                    onClick={() => setMemberModalTab('logs')}
+                    className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${memberModalTab === 'logs' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    접속 이력
+                  </button>
+                </div>
+
+                {memberModalTab === 'info' && (
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
                     <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">연락처</p>
@@ -2375,7 +2038,53 @@ const BusinessDashboard = () => {
                     <p className="text-sm font-black text-primary">{(selectedMember.ticketsByBusiness?.[auth.currentUser?.uid || ''] || selectedMember.tickets || 0)}회</p>
                   </div>
                 </div>
+                )}
 
+                {memberModalTab === 'reservations' && (
+                <div>
+                  <h4 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">최근 수강 이력</h4>
+                  <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800 overflow-hidden">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-100 dark:bg-slate-800 text-[10px] font-black uppercase text-slate-500">
+                        <tr>
+                          <th className="px-5 py-3">신청 일시</th>
+                          <th className="px-5 py-3">수업 일정</th>
+                          <th className="px-5 py-3">상태</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {allReservations.filter(r => r.uid === selectedMember.uid).map((res) => (
+                          <tr key={res.id} className="hover:bg-white dark:hover:bg-slate-800/50 transition-colors">
+                            <td className="px-5 py-3 text-slate-500">
+                              {res.createdAt?.toDate?.() ? new Date(res.createdAt.toDate()).toLocaleDateString('ko-KR') : '-'}
+                            </td>
+                            <td className="px-5 py-3">
+                              <p className="font-bold text-slate-700 dark:text-slate-300">{res.className}</p>
+                              <p className="text-[10px] text-slate-400">{res.classDate} {res.classTime}</p>
+                            </td>
+                            <td className="px-5 py-3">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                res.status === 'CONFIRMED' ? 'bg-emerald-100 text-emerald-600' :
+                                res.status === 'PENDING' ? 'bg-amber-100 text-amber-600' :
+                                'bg-rose-100 text-rose-600'
+                              }`}>
+                                {res.status === 'CONFIRMED' ? '승인완료' : res.status === 'PENDING' ? '대기중' : '취소/거절'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                        {allReservations.filter(r => r.uid === selectedMember.uid).length === 0 && (
+                          <tr>
+                            <td colSpan={3} className="px-5 py-10 text-center text-slate-400">수강 이력이 없습니다.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                )}
+
+                {memberModalTab === 'logs' && (
                 <div>
                   <h4 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">최근 접속 이력</h4>
                   <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800 overflow-hidden">
@@ -2414,6 +2123,7 @@ const BusinessDashboard = () => {
                     </table>
                   </div>
                 </div>
+                )}
 
                 <div className="flex justify-end pt-2">
                   <button 
@@ -2423,6 +2133,44 @@ const BusinessDashboard = () => {
                     확인
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* 일괄 수정 모달 */}
+        {isBatchEditModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setIsBatchEditModalOpen(false)}>
+            <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-3xl shadow-2xl p-6" onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-bold">일괄 수정 ({selectedClassIds.length}개)</h3>
+                <button onClick={() => setIsBatchEditModalOpen(false)} className="text-slate-400 hover:text-slate-600"><span className="material-symbols-outlined">close</span></button>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-500 mb-1 block">수업 이름</label>
+                  <input type="text" value={batchEditData.className} onChange={e => setBatchEditData({...batchEditData, className: e.target.value})} className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 focus:outline-none focus:border-primary font-bold" placeholder="변경할 수업 이름" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 mb-1 block">수업 시간 (길이)</label>
+                  <select value={batchEditData.duration} onChange={e => setBatchEditData({...batchEditData, duration: Number(e.target.value)})} className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 focus:outline-none focus:border-primary font-bold">
+                    <option value={30}>30분</option>
+                    <option value={60}>1시간</option>
+                    <option value={90}>1시간 30분</option>
+                    <option value={120}>2시간</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 mb-1 block">최대 정원</label>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {[1, 2, 3, 4, 5, 6].map(n => (
+                      <button key={n} type="button" onClick={() => setBatchEditData({...batchEditData, maxCapacity: n})} className={`w-8 h-8 rounded-lg text-sm font-black transition-all ${batchEditData.maxCapacity === n ? 'bg-primary text-white shadow-md shadow-primary/20' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700 hover:border-primary/50 hover:text-primary'}`}>{n}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-6 flex gap-2">
+                <button onClick={() => setIsBatchEditModalOpen(false)} className="flex-1 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold hover:brightness-95 transition-all">취소</button>
+                <button onClick={handleBatchEdit} className="flex-1 p-3 rounded-xl bg-primary text-white font-bold hover:brightness-110 shadow-lg shadow-primary/20 transition-all">수정 완료</button>
               </div>
             </div>
           </div>

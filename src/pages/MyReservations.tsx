@@ -109,8 +109,12 @@ const MyReservations = () => {
 
           if (!userDoc.exists()) throw "User record not found";
           
-          // 1. 유저 티켓 복구 (+1)
-          transaction.update(userRef, { tickets: (userDoc.data().tickets || 0) + 1 });
+          // 1. 유저 티켓 복구 (시간 단위 비례 환불)
+          const requiredTickets = Math.ceil((res.classDuration || (classDoc.exists() ? classDoc.data().duration : 60) || 60) / 30);
+          const currentBizTickets = userDoc.data().ticketsByBusiness?.[res.businessId] || 0;
+          transaction.update(userRef, { 
+            [`ticketsByBusiness.${res.businessId}`]: currentBizTickets + requiredTickets 
+          });
 
           // 2. 클래스 인원 감소 (-1) - 확정된 예약인 경우에만
           if (classDoc.exists() && res.status === 'CONFIRMED') {

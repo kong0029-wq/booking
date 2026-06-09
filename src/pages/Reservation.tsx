@@ -164,8 +164,9 @@ const Reservation = () => {
     if (!user) { alert('로그인이 필요합니다.'); navigate('/'); return; }
 
     const currentTickets = userData?.ticketsByBusiness?.[businessId || ''] || 0;
-    if (!userData || currentTickets <= 0) {
-      alert('보유하신 수강권이 없습니다. 센터에 문의하거나 수강권을 충전해 주세요! 😊');
+    const requiredTickets = Math.ceil((selectedClass?.duration || 60) / 30);
+    if (!userData || currentTickets < requiredTickets) {
+      alert(`보유하신 수강권이 부족합니다. (필요: ${requiredTickets}회, 보유: ${currentTickets}회)\n센터에 문의하거나 수강권을 충전해 주세요! 😊`);
       return;
     }
 
@@ -190,13 +191,15 @@ const Reservation = () => {
         const tickets = userSnap.data()?.ticketsByBusiness?.[businessId || ''] || 0;
         const currentCap = classSnap.data()?.currentCapacity || 0;
         const maxCap = classSnap.data()?.maxCapacity || 6;
+        const duration = classSnap.data()?.duration || 60;
+        const requiredTickets = Math.ceil(duration / 30);
 
-        if (tickets <= 0) throw new Error("남은 수강권이 없습니다.");
+        if (tickets < requiredTickets) throw new Error(`남은 수강권이 부족합니다. (필요: ${requiredTickets}회, 보유: ${tickets}회)`);
         if (currentCap >= maxCap) throw new Error("이미 정원이 초과된 수업입니다.");
 
         // 해당 센터의 티켓 차감
         transaction.update(userRef, { 
-          [`ticketsByBusiness.${businessId}`]: increment(-1) 
+          [`ticketsByBusiness.${businessId}`]: increment(-requiredTickets) 
         });
 
         // 수업 인원수 증가

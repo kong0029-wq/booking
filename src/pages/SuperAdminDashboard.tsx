@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../firebase';
-import { signOut } from 'firebase/auth';
+import { signOut, sendPasswordResetEmail } from 'firebase/auth';
 import { collection, getDocs, query, orderBy, limit, doc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 
 type Tab = 'dashboard' | 'users' | 'classes' | 'logs' | 'settings';
@@ -15,6 +15,7 @@ const SuperAdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [userFilter, setUserFilter] = useState<string>('all');
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
     const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
@@ -48,6 +49,19 @@ const SuperAdminDashboard = () => {
   const handleDeleteClass = async (classId: string) => {
     if (!confirm('정말 이 수업을 삭제하시겠습니까?')) return;
     await deleteDoc(doc(db, 'classes', classId));
+  };
+
+  const handleResetPassword = async (email: string, name: string) => {
+    if (!confirm(`${name}(${email})님에게 비밀번호 재설정 메일을 보내시겠습니까?`)) return;
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setToast({ message: `${name}(${email})님에게 비밀번호 재설정 메일을 발송했습니다.`, type: 'success' });
+      setTimeout(() => setToast(null), 4000);
+    } catch (err: any) {
+      console.error('Password reset error:', err);
+      setToast({ message: `메일 발송 실패: ${err.message}`, type: 'error' });
+      setTimeout(() => setToast(null), 4000);
+    }
   };
 
   const filteredUsers = users.filter(u => {
@@ -173,7 +187,8 @@ const SuperAdminDashboard = () => {
                       <select className="text-xs border border-slate-200 rounded-lg px-1 py-1 outline-none" defaultValue={u.role} onChange={e => handleRoleChange(u.id, e.target.value)}>
                         <option value="USER">USER</option><option value="BUSINESS">BUSINESS</option><option value="ADMIN">ADMIN</option><option value="SUPER_ADMIN">SUPER_ADMIN</option>
                       </select>
-                      <button onClick={() => handleDeleteUser(u.id)} className="text-rose-400 hover:text-rose-600 transition-colors"><span className="material-symbols-outlined text-[18px]">delete</span></button>
+                      <button onClick={() => handleResetPassword(u.email, u.name)} title="비밀번호 초기화" className="text-blue-400 hover:text-blue-600 transition-colors"><span className="material-symbols-outlined text-[18px]">lock_reset</span></button>
+                      <button onClick={() => handleDeleteUser(u.id)} title="계정 삭제" className="text-rose-400 hover:text-rose-600 transition-colors"><span className="material-symbols-outlined text-[18px]">delete</span></button>
                     </div>
                   </td>
                 </tr>
@@ -327,6 +342,18 @@ const SuperAdminDashboard = () => {
           {contentMap[activeTab]()}
         </div>
       </main>
+
+      {/* 토스트 알림 */}
+      {toast && (
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] max-w-md px-6 py-3.5 rounded-2xl shadow-2xl text-sm font-semibold flex items-center gap-2 ${
+          toast.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'
+        }`}>
+          <span className="material-symbols-outlined text-lg">
+            {toast.type === 'success' ? 'check_circle' : 'error'}
+          </span>
+          {toast.message}
+        </div>
+      )}
     </div>
   );
 };
