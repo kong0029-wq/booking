@@ -12,6 +12,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../firebase';
 // @ts-ignore
 import { getHolidays } from 'korean-holidays';
+import { ClassCalendar } from '../components/ClassCalendar';
 
 export type RecurringRule = {
   frequency: 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly';
@@ -20,6 +21,7 @@ export type RecurringRule = {
   endCount: number;
   endDate: string;
   weeklyDays: number[];
+  infiniteDuration?: 'day' | 'week' | 'month' | 'year';
 };
 
 const BusinessDashboard = () => {
@@ -28,7 +30,9 @@ const BusinessDashboard = () => {
   const [userData, setUserData] = useState<any>(null);
   const [classes, setClasses] = useState<any[]>([]);
   const [loginLogs, setLoginLogs] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'classes' | 'approval' | 'members' | 'logs' | 'settings' | 'class-list'>('dashboard');
+  const [classListViewFormat, setClassListViewFormat] = useState<'calendar' | 'list'>('calendar');
+
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'classes' | 'class-list' | 'members' | 'logs' | 'settings' | 'approvals'>('dashboard');
   const [stats, setStats] = useState({ todayClasses: 0, totalReservations: 0, totalClasses: 0, todayLogins: 0, pendingRequests: 0, totalApplicants: 0, totalMembers: 0 });
   const [pendingReservations, setPendingReservations] = useState<any[]>([]);
   const [membersList, setMembersList] = useState<any[]>([]);
@@ -379,15 +383,18 @@ const BusinessDashboard = () => {
         
         const promises = [];
         
-        // 1년(365일)치 제한
-        const MAX_DAYS_AHEAD = 365;
+        const rule = draftEvent.recurringRule;
         const [y, m, d] = draftEvent.date.split('-').map(Number);
         const baseDateObj = new Date(y, m - 1, d);
         const maxDateObj = new Date(baseDateObj);
-        maxDateObj.setDate(maxDateObj.getDate() + MAX_DAYS_AHEAD);
+        
+        const infiniteDuration = rule?.infiniteDuration || 'year';
+        if (infiniteDuration === 'year') maxDateObj.setFullYear(maxDateObj.getFullYear() + 1);
+        else if (infiniteDuration === 'month') maxDateObj.setMonth(maxDateObj.getMonth() + 1);
+        else if (infiniteDuration === 'week') maxDateObj.setDate(maxDateObj.getDate() + 7);
+        else if (infiniteDuration === 'day') maxDateObj.setDate(maxDateObj.getDate() + 1);
 
         const targetDates: string[] = [];
-        const rule = draftEvent.recurringRule;
 
         if (!rule || rule.frequency === 'none') {
           targetDates.push(draftEvent.date);
@@ -1141,12 +1148,27 @@ const BusinessDashboard = () => {
           {/* ===== 수업 목록 (시리즈별) 탭 ===== */}
           {activeTab === 'class-list' && (
             <div className="space-y-6">
-              <div className="flex justify-between items-center">
+              <div className="flex justify-between items-center mb-2">
                 <div>
                   <h3 className="text-xl font-bold">등록 수업 마스터 목록</h3>
-                  <p className="text-sm text-slate-500">등록된 수업 종류별(시리즈별) 요약 목록입니다.</p>
+                  <p className="text-sm text-slate-500">생성된 전체 수업을 달력 또는 목록 형태로 확인합니다.</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
+                  <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl mr-2">
+                    <button 
+                      onClick={() => setClassListViewFormat('calendar')}
+                      className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2 ${classListViewFormat === 'calendar' ? 'bg-white dark:bg-slate-700 shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      <span className="material-symbols-outlined text-[16px]">calendar_month</span>달력 보기
+                    </button>
+                    <button 
+                      onClick={() => setClassListViewFormat('list')}
+                      className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2 ${classListViewFormat === 'list' ? 'bg-white dark:bg-slate-700 shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      <span className="material-symbols-outlined text-[16px]">format_list_bulleted</span>목록 보기
+                    </button>
+                  </div>
+                  
                   <button 
                     onClick={handleDeleteAllClasses}
                     className="flex items-center gap-2 px-4 py-2 bg-rose-50 text-rose-500 rounded-xl font-bold text-sm hover:bg-rose-100 transition-all"
@@ -1167,8 +1189,11 @@ const BusinessDashboard = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-4">
-                {groupedClassesList.map((group: any, idx: number) => (
+              {classListViewFormat === 'calendar' ? (
+                <ClassCalendar classes={classes} />
+              ) : (
+                <div className="grid grid-cols-1 gap-4">
+                  {groupedClassesList.map((group: any, idx: number) => (
                   <div key={idx} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:shadow-md transition-shadow">
                     <div className="flex items-center gap-5">
                       <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary overflow-hidden border border-slate-100 dark:border-slate-800">
@@ -1242,6 +1267,7 @@ const BusinessDashboard = () => {
                   </div>
                 )}
               </div>
+              )}
             </div>
           )}
 
@@ -1361,7 +1387,8 @@ const BusinessDashboard = () => {
                         endType: 'infinite',
                         endCount: 10,
                         endDate: dragSelection.date,
-                        weeklyDays: [new Date(dragSelection.date).getDay()]
+                        weeklyDays: [new Date(dragSelection.date).getDay()],
+                        infiniteDuration: 'year'
                       }
                     });
                     setEditingClassId(null);
@@ -1627,7 +1654,19 @@ const BusinessDashboard = () => {
                                             <p className="text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-wider">종료 조건</p>
                                             <label className="flex items-center gap-2 cursor-pointer">
                                               <input type="radio" name="endType" value="infinite" checked={draftEvent.recurringRule.endType === 'infinite'} onChange={() => setDraftEvent({ ...draftEvent, recurringRule: { ...draftEvent.recurringRule!, endType: 'infinite' } })} className="accent-primary" />
-                                              <span className="text-xs font-medium">계속 반복 <span className="text-[10px] text-slate-400 font-normal">(최대 1년치 자동 생성)</span></span>
+                                              <span className="text-xs font-medium">계속 반복 <span className="text-[10px] text-slate-400 font-normal">(자동 생성 기간)</span></span>
+                                              {draftEvent.recurringRule.endType === 'infinite' && (
+                                                <select 
+                                                  value={draftEvent.recurringRule.infiniteDuration || 'year'} 
+                                                  onChange={e => setDraftEvent({ ...draftEvent, recurringRule: { ...draftEvent.recurringRule!, infiniteDuration: e.target.value as any } })}
+                                                  className="ml-auto px-2 py-1 text-xs border border-slate-200 rounded-md dark:bg-slate-700 dark:border-slate-600 text-right focus:outline-none focus:border-primary font-bold bg-transparent"
+                                                >
+                                                  <option value="year">최대 1년</option>
+                                                  <option value="month">최대 1개월</option>
+                                                  <option value="week">최대 1주일</option>
+                                                  <option value="day">최대 1일</option>
+                                                </select>
+                                              )}
                                             </label>
                                             <label className="flex items-center gap-2 cursor-pointer mt-1.5">
                                               <input type="radio" name="endType" value="count" checked={draftEvent.recurringRule.endType === 'count'} onChange={() => setDraftEvent({ ...draftEvent, recurringRule: { ...draftEvent.recurringRule!, endType: 'count' } })} className="accent-primary" />
