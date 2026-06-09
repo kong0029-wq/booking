@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "ezreserve",
     "public": "dist",
     "ignore": [
       "firebase.json",
