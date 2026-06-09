@@ -135,6 +135,7 @@ const BusinessDashboard = () => {
     className: string;
     maxCapacity: number;
     recurringRule?: RecurringRule;
+    excludeHolidays?: boolean;
   } | null>(null);
 
   const [dragSelection, setDragSelection] = useState<{ date: string; startIdx: number; currentIdx: number } | null>(null);
@@ -409,13 +410,27 @@ const BusinessDashboard = () => {
                 break;
               }
 
-              targetDates.push(currentStr);
-              occurrencesCount++;
+              let isHoliday = false;
+              if (draftEvent.excludeHolidays !== false) {
+                const holidaysForYear = getHolidays(cy) || [];
+                isHoliday = holidaysForYear.some((h: any) => {
+                  const hd = new Date(h.date);
+                  const hcy = hd.getFullYear();
+                  const hcm = String(hd.getMonth() + 1).padStart(2, '0');
+                  const hcd = String(hd.getDate()).padStart(2, '0');
+                  return `${hcy}-${hcm}-${hcd}` === currentStr;
+                });
+              }
 
-              // count 조건 확인
-              if (rule.endType === 'count' && occurrencesCount >= rule.endCount) {
-                endConditionMet = true;
-                break;
+              if (!isHoliday) {
+                targetDates.push(currentStr);
+                occurrencesCount++;
+
+                // count 조건 확인
+                if (rule.endType === 'count' && occurrencesCount >= rule.endCount) {
+                  endConditionMet = true;
+                  break;
+                }
               }
             }
 
@@ -1339,6 +1354,7 @@ const BusinessDashboard = () => {
                       totalSelectedDuration: totalDuration,
                       className: '',
                       maxCapacity: 6,
+                      excludeHolidays: true,
                       recurringRule: {
                         frequency: 'none',
                         interval: 1,
@@ -1601,6 +1617,13 @@ const BusinessDashboard = () => {
 
                                         {draftEvent.recurringRule.frequency !== 'none' && (
                                           <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                                            <p className="text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-wider">상세 설정</p>
+                                            
+                                            <label className="flex items-center gap-2 cursor-pointer mb-3 p-2 bg-slate-100 dark:bg-slate-700/50 rounded-lg">
+                                              <input type="checkbox" checked={draftEvent.excludeHolidays !== false} onChange={e => setDraftEvent({ ...draftEvent, excludeHolidays: e.target.checked })} className="accent-rose-500 w-4 h-4 rounded" />
+                                              <span className="text-xs font-bold text-slate-700 dark:text-slate-300">공휴일 제외 <span className="text-[10px] text-slate-400 font-normal">(법정 공휴일에는 수업 미생성)</span></span>
+                                            </label>
+
                                             <p className="text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-wider">종료 조건</p>
                                             <label className="flex items-center gap-2 cursor-pointer">
                                               <input type="radio" name="endType" value="infinite" checked={draftEvent.recurringRule.endType === 'infinite'} onChange={() => setDraftEvent({ ...draftEvent, recurringRule: { ...draftEvent.recurringRule!, endType: 'infinite' } })} className="accent-primary" />
