@@ -462,6 +462,7 @@ const BusinessDashboard = () => {
             };
 
             const createWithGcal = async () => {
+              const gcalToken = sessionStorage.getItem('gcal_access_token');
               if (gcalToken) {
                 try {
                   const googleEventId = await createGoogleEvent(gcalToken, {
