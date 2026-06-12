@@ -8,7 +8,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "release": "git add . && git commit -m \"Auto deploy and release\" && git push && npm run build && npx -y firebase-tools@latest deploy --only hosting"
+    "deploy": "npm run build && npx -y firebase-tools@latest deploy --only hosting",
+    "release": "git add . && git commit -m \"Auto deploy and release\" && git push && npm run deploy"
   },
   "dependencies": {
     "firebase": "^12.12.1",

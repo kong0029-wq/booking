@@ -1,7 +1,8 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { auth, db } from '../firebase';
-import { signOut, deleteUser } from 'firebase/auth';
+import { auth, db, storage } from '../firebase';
+import { signOut, deleteUser, GoogleAuthProvider, signInWithPopup, linkWithPopup } from 'firebase/auth';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
   collection, addDoc, deleteDoc, doc, getDoc, getDocs,
   query, where, onSnapshot, orderBy, limit, updateDoc, setDoc,
@@ -170,6 +171,9 @@ const BusinessDashboard = () => {
   // 업체 설정 폼
   const [editBusinessName, setEditBusinessName] = useState('');
   const [editPhoneNumber, setEditPhoneNumber] = useState('');
+  const [editGoogleCalendarId, setEditGoogleCalendarId] = useState('');
+  const [businessLogoURL, setBusinessLogoURL] = useState('');
+  const [uploadingLogo, setUploadingLogo] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -196,6 +200,8 @@ const BusinessDashboard = () => {
               setUserData(snap.data());
               setEditBusinessName(snap.data().businessName || '');
               setEditPhoneNumber(snap.data().phoneNumber || '');
+              setEditGoogleCalendarId(snap.data().googleCalendarId || '');
+              setBusinessLogoURL(snap.data().businessLogoURL || '');
             }
           } catch (e) { console.error("User snap error:", e); }
         });
@@ -825,6 +831,78 @@ const BusinessDashboard = () => {
     }
   };
 
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !auth.currentUser) return;
+    
+    if (!file.type.startsWith('image/')) {
+      alert('이미지 파일만 업로드 가능합니다.');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      alert('이미지 크기는 10MB 이하여야 합니다.');
+      return;
+    }
+
+    setUploadingLogo(true);
+    try {
+      const fileRef = ref(storage, `business_logos/${auth.currentUser.uid}_${Date.now()}`);
+      await uploadBytes(fileRef, file);
+      const url = await getDownloadURL(fileRef);
+      setBusinessLogoURL(url);
+    } catch (err) {
+      console.error('Logo upload error:', err);
+      alert('이미지 업로드에 실패했습니다.');
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
+  const handleGoogleCalendarLink = async () => {
+    try {
+      if (!auth.currentUser) throw new Error('로그인이 필요합니다.');
+      
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      provider.addScope('https://www.googleapis.com/auth/calendar.events');
+      
+      // signInWithPopup 대신 기존 로그인된 계정에 구글 계정을 연결(link)합니다.
+      const result = await linkWithPopup(auth.currentUser, provider).catch(async (err) => {
+        // 이미 연동되어 있는 경우, 토큰만 갱신하기 위해 재인증 시도
+        if (err.code === 'auth/credential-already-in-use') {
+           throw new Error('선택하신 구글 계정은 이미 시스템에 가입된 계정이어서 연동할 수 없습니다. 가입되지 않은 다른 구글 계정을 선택해주세요.');
+        } else if (err.code === 'auth/provider-already-linked') {
+           // 이미 링크된 구글 계정이면 다시 로그인(signIn)해서 토큰만 가져옵니다.
+           return await signInWithPopup(auth, provider);
+        }
+        throw err;
+      });
+
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      
+      if (credential && credential.accessToken) {
+        sessionStorage.setItem('gcal_access_token', credential.accessToken);
+        setEditGoogleCalendarId(result.user.email || '');
+        alert('구글 캘린더 연동이 완료되었습니다! (현재 세션 동안 유효)\n변경사항을 저장하려면 하단의 [업체 정보 저장]을 눌러주세요.');
+      }
+    } catch (err: any) {
+      console.error('Google Calendar Link Error:', err);
+      if (err.message && err.message.includes('가입된 계정')) {
+        alert(err.message);
+      } else {
+        alert(`구글 캘린더 연동 중 오류가 발생했습니다.\n상세: ${err.code || err.message}`);
+      }
+    }
+  };
+
+  const handleGoogleCalendarUnlink = () => {
+    if (confirm('구글 캘린더 연동을 취소하시겠습니까?')) {
+      sessionStorage.removeItem('gcal_access_token');
+      setEditGoogleCalendarId('');
+      alert('연동이 취소되었습니다.\n변경사항을 완전히 적용하려면 하단의 [업체 정보 저장]을 눌러주세요.');
+    }
+  };
+
   const handleSaveBusinessInfo = async () => {
     const user = auth.currentUser;
     if (!user) return;
@@ -832,7 +910,9 @@ const BusinessDashboard = () => {
     try {
       await updateDoc(doc(db, 'users', user.uid), { 
         businessName: editBusinessName,
-        phoneNumber: editPhoneNumber 
+        phoneNumber: editPhoneNumber,
+        googleCalendarId: editGoogleCalendarId,
+        businessLogoURL: businessLogoURL
       });
       alert('업체 정보가 저장되었습니다.');
     } catch { alert('저장 실패'); }
@@ -1896,6 +1976,28 @@ const BusinessDashboard = () => {
                   <span className="material-symbols-outlined text-primary">settings</span>
                   업체 정보 설정
                 </h3>
+                <div className="flex flex-col items-center gap-3 mb-8 px-4">
+                  <div className="relative group w-full max-w-[320px]">
+                    <div className="w-full aspect-video rounded-xl border-4 border-slate-50 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 overflow-hidden shadow-sm flex items-center justify-center">
+                      {businessLogoURL ? (
+                        <img src={businessLogoURL} alt="업체 로고" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="text-center">
+                          <span className="material-symbols-outlined text-4xl text-slate-400">storefront</span>
+                          <p className="text-xs text-slate-400 font-bold mt-1">업체 대표 사진</p>
+                        </div>
+                      )}
+                    </div>
+                    <label className="absolute -bottom-3 -right-3 w-10 h-10 bg-emerald-500 text-white rounded-full flex items-center justify-center cursor-pointer shadow-lg hover:bg-emerald-600 transition-transform hover:scale-105 active:scale-95">
+                      <span className="material-symbols-outlined text-base">{uploadingLogo ? 'hourglass_empty' : 'photo_camera'}</span>
+                      <input type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} disabled={uploadingLogo} />
+                    </label>
+                  </div>
+                  <div className="text-center mt-3">
+                    <p className="text-sm font-bold text-slate-700 dark:text-slate-300">업체 로고 / 대표 사진</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">권장: 16:9 가로 비율, 10MB 이하</p>
+                  </div>
+                </div>
                 <div className="space-y-5">
                   <div>
                     <label className="text-xs text-slate-500 font-bold uppercase tracking-wider block mb-1.5 px-1">업체명</label>
@@ -1916,6 +2018,47 @@ const BusinessDashboard = () => {
                       className="w-full h-12 px-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 focus:ring-2 focus:ring-primary outline-none transition-all font-medium"
                       placeholder="업체 연락처를 입력하세요"
                     />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500 font-bold uppercase tracking-wider block mb-1.5 px-1">구글 캘린더 연동</label>
+                    <div className="flex items-center gap-3">
+                      {editGoogleCalendarId ? (
+                        <div className="flex-1 h-12 px-4 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 flex items-center justify-between font-medium">
+                          <div className="flex items-center gap-2">
+                            <span className="material-symbols-outlined text-emerald-500">check_circle</span>
+                            <span>{editGoogleCalendarId}</span>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={handleGoogleCalendarLink}
+                              className="text-xs font-bold bg-white text-emerald-700 px-3 py-1.5 rounded-lg shadow-sm border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                            >
+                              계정 변경
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleGoogleCalendarUnlink}
+                              className="text-xs font-bold bg-white text-rose-500 px-3 py-1.5 rounded-lg shadow-sm border border-rose-200 hover:bg-rose-50 transition-colors"
+                            >
+                              연동 취소
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleGoogleCalendarLink}
+                          className="w-full h-12 px-4 bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 font-bold rounded-xl transition-colors flex items-center justify-center gap-2 border border-blue-200 dark:border-blue-800 shadow-sm"
+                        >
+                          <span className="material-symbols-outlined">calendar_today</span>
+                          구글 계정 연동하기
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1.5 px-1">
+                      * 캘린더 일정을 동기화하려면 구글 계정을 연동해 주세요.
+                    </p>
                   </div>
                   <div>
                     <label className="text-xs text-slate-500 font-bold uppercase tracking-wider block mb-1.5 px-1">대표자</label>

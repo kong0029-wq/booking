@@ -154,7 +154,7 @@ const TicketPurchase = () => {
                       businessName: biz.businessName || '이름 없는 센터',
                       businessDescription: biz.businessDescription || biz.about || '센터 설명이 준비 중입니다.',
                       id: curr.id, // 그룹을 대표하는 샘플 ID
-                      classPhotoURL: curr.classPhotoURL,
+                      classPhotoURL: curr.classPhotoURL || biz.businessLogoURL,
                       bizData: biz
                     });
                   }
@@ -191,7 +191,7 @@ const TicketPurchase = () => {
                       className="monolith-card"
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-                        <div style={{ width: '80px', height: '80px', backgroundColor: '#f8f9fa', borderRadius: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', border: '1px solid #edf2f7', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}>
+                        <div style={{ width: '144px', height: '81px', flexShrink: 0, backgroundColor: '#f8f9fa', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', border: '1px solid #edf2f7', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}>
                           {item.classPhotoURL ? (
                             <img src={item.classPhotoURL} alt={item.className} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                           ) : (
