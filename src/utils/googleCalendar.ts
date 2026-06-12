@@ -1,3 +1,7 @@
+export const formatDateTime = (date: string, time: string) => {
+  return `${date}T${time}:00+09:00`;
+};
+
 export const createGoogleEvent = async (accessToken: string, eventData: { title: string, startDateTime: string, endDateTime: string, description?: string }) => {
   const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
     method: 'POST',

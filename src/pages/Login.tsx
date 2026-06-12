@@ -384,7 +384,8 @@ const Login = () => {
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
-      provider.addScope('https://www.googleapis.com/auth/calendar.events');
+      // ⚠️ 구글 검수 전까지 민감한 권한(캘린더) 요청을 주석 처리하여 경고 화면 없이 정상 로그인되도록 개선
+      // provider.addScope('https://www.googleapis.com/auth/calendar.events');
 
       if (isMobileDevice()) {
         // 모바일은 항상 리다이렉트 방식 사용 (팝업 차단 + WebView 이슈 회피)

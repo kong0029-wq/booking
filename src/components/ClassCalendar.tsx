@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 
 type ViewMode = 'year' | 'month' | 'week' | 'day';
 
@@ -134,7 +134,7 @@ export const ClassCalendar: React.FC<ClassCalendarProps> = ({ classes }) => {
                 return (
                   <div key={i} className="flex-1 border-r border-slate-100 dark:border-slate-800/50 last:border-0 relative p-1">
                     {cellClasses.map((c, idx) => {
-                      const [ch, cm] = c.time.split(':').map(Number);
+                      const [, cm] = c.time.split(':').map(Number);
                       const top = (cm / 60) * 80;
                       const height = Math.max(((c.duration || 60) / 60) * 80, 24); // 최소 높이 보장
                       
@@ -180,7 +180,7 @@ export const ClassCalendar: React.FC<ClassCalendarProps> = ({ classes }) => {
               </div>
               <div className="flex-1 relative p-2">
                 {classes.filter(c => c.date === dateStr && parseInt(c.time.split(':')[0]) === h).map((c, idx) => {
-                  const [ch, cm] = c.time.split(':').map(Number);
+                  const [, cm] = c.time.split(':').map(Number);
                   const top = (cm / 60) * 100;
                   const height = Math.max(((c.duration || 60) / 60) * 100, 30);
                   

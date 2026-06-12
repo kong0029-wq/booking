@@ -1,5 +1,4 @@
 import { useEffect, useState, useMemo } from 'react';
-import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../firebase';
 import { signOut, deleteUser } from 'firebase/auth';
@@ -8,10 +7,9 @@ import {
   query, where, onSnapshot, orderBy, limit, updateDoc, setDoc,
   serverTimestamp, increment, runTransaction
 } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { storage } from '../firebase';
 // @ts-ignore
 import { getHolidays } from 'korean-holidays';
+import { createGoogleEvent, deleteGoogleEvent, formatDateTime } from '../utils/googleCalendar';
 import { ClassCalendar } from '../components/ClassCalendar';
 
 export type RecurringRule = {
@@ -40,16 +38,9 @@ const BusinessDashboard = () => {
   const [memberModalTab, setMemberModalTab] = useState<'info' | 'reservations' | 'logs'>('info');
   const [memberLogs, setMemberLogs] = useState<any[]>([]);
   const [isLogModalOpen, setIsLogModalOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
-  const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [allReservations, setAllReservations] = useState<any[]>([]);
-  const [activeActionMenu, setActiveActionMenu] = useState<{ id: string, type: 'edit' | 'delete' } | null>(null);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedClassIds, setSelectedClassIds] = useState<string[]>([]);
-  const [classStatusFilter, setClassStatusFilter] = useState<'all' | 'upcoming' | 'completed'>('all');
-  const [classPhotoFile, setClassPhotoFile] = useState<File | null>(null);
-  const [classPhotoPreview, setClassPhotoPreview] = useState<string | null>(null);
 
   // 수업 그룹화 (시리즈별 목록)
   const groupedClassesList = Array.from(classes.reduce((acc, curr) => {
@@ -81,8 +72,6 @@ const BusinessDashboard = () => {
   // 수업 등록 폼
   const todayStr = new Date().toISOString().split('T')[0];
   const defaultSchedule = { slots: [] as { time: string, duration: number }[] };
-  const periodLabels: Record<string, string> = { week: '주', month: '월', year: '년' };
-  const [regCalendarMonth, setRegCalendarMonth] = useState(new Date());
   const [newClass, setNewClass] = useState({
     className: '',
     startDate: todayStr,
@@ -100,7 +89,6 @@ const BusinessDashboard = () => {
   });
   const [isRegistering, setIsRegistering] = useState(false);
   const [editingClassId, setEditingClassId] = useState<string | null>(null);
-  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
 
   // 주간 캘린더 상태
   const [currentWeekStart, setCurrentWeekStart] = useState(() => {
@@ -162,8 +150,6 @@ const BusinessDashboard = () => {
 
   const handleResetForm = () => {
     setEditingClassId(null);
-    setEditingGroupId(null);
-    setRegCalendarMonth(new Date());
     setNewClass({
       className: '',
       startDate: todayStr,
@@ -329,24 +315,6 @@ const BusinessDashboard = () => {
     navigate('/');
   };
 
-  // 기간 내 선택된 요일의 날짜 목록 생성 (타임존 이슈 해결)
-  const getDatesInRange = (start: string, end: string, days: number[]): string[] => {
-    const dates: string[] = [];
-    const startD = new Date(start + 'T00:00:00');
-    const endD = new Date(end + 'T00:00:00');
-    
-    let current = new Date(startD);
-    while (current <= endD) {
-      if (days.includes(current.getDay())) {
-        const y = current.getFullYear();
-        const m = String(current.getMonth() + 1).padStart(2, '0');
-        const d = String(current.getDate()).padStart(2, '0');
-        dates.push(`${y}-${m}-${d}`);
-      }
-      current.setDate(current.getDate() + 1);
-    }
-    return dates;
-  };
 
   const handleSaveDraftEvent = async () => {
     if (!draftEvent) return;
@@ -357,9 +325,6 @@ const BusinessDashboard = () => {
       const user = auth.currentUser;
       if (!user) return;
 
-      const [h, m] = draftEvent.time.split(':').map(Number);
-      const endMin = h * 60 + m + draftEvent.duration;
-      const endTime = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
 
       if (editingClassId) {
         // [단일 수정]
@@ -571,7 +536,6 @@ const BusinessDashboard = () => {
     }
 
     setEditingClassId(cls.id);
-    setEditingGroupId(null);
 
     // 해당 클래스의 날짜가 포함된 주로 캘린더 뷰 이동
     const classDate = new Date(cls.date + 'T00:00:00');
@@ -595,20 +559,6 @@ const BusinessDashboard = () => {
 
 
 
-  const handleBatchDelete = async () => {
-    if (selectedClassIds.length === 0) return;
-    if (!window.confirm(`선택한 ${selectedClassIds.length}개의 수업을 일괄 삭제하시겠습니까?`)) return;
-
-    try {
-      const promises = selectedClassIds.map(id => deleteDoc(doc(db, 'classes', id)));
-      await Promise.all(promises);
-      alert('일괄 삭제가 완료되었습니다.');
-      setSelectedClassIds([]);
-    } catch (err) {
-      console.error(err);
-      alert('삭제 중 오류가 발생했습니다.');
-    }
-  };
 
   const handleBatchEdit = async () => {
     if (selectedClassIds.length === 0) return;
@@ -774,7 +724,6 @@ const BusinessDashboard = () => {
       }
       
       alert(`총 ${snap.docs.length}개의 수업 일정이 삭제되었습니다.`);
-      setEditingGroupId(null);
       setEditingClassId(null);
       setNewClass({ ...newClass, className: '' });
     } catch (err) {
@@ -989,7 +938,7 @@ const BusinessDashboard = () => {
     { key: 'dashboard', label: '대시보드', icon: 'dashboard' },
     { key: 'class-list', label: '수업 목록', icon: 'format_list_bulleted' },
     { key: 'classes', label: '수업 일정 관리', icon: 'calendar_month' },
-    { key: 'approval', label: '승인요청', icon: 'how_to_reg' },
+    { key: 'approvals', label: '승인요청', icon: 'how_to_reg' },
     { key: 'members', label: '회원 관리', icon: 'group' },
     { key: 'logs', label: '접속 이력', icon: 'history' },
     { key: 'settings', label: '업체 설정', icon: 'settings' },
@@ -1023,7 +972,7 @@ const BusinessDashboard = () => {
             >
               <span className="material-symbols-outlined">{tab.icon}</span>
               <span>{tab.label}</span>
-              {tab.key === 'approval' && stats.pendingRequests > 0 && (
+              {tab.key === 'approvals' && stats.pendingRequests > 0 && (
                 <span className="ml-auto bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full animate-bounce">
                   {stats.pendingRequests}
                 </span>
@@ -1086,7 +1035,7 @@ const BusinessDashboard = () => {
             >
               <span className="material-symbols-outlined text-lg">{tab.icon}</span>
               <span>{tab.label}</span>
-              {tab.key === 'approval' && stats.pendingRequests > 0 && (
+              {tab.key === 'approvals' && stats.pendingRequests > 0 && (
                 <span className="ml-1 bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">
                   {stats.pendingRequests}
                 </span>
@@ -1248,7 +1197,6 @@ const BusinessDashboard = () => {
                         </button>
                         <button 
                           onClick={() => {
-                            setSelectedDate(group.startDate);
                             setActiveTab('classes');
                           }}
                           className="px-4 h-10 rounded-xl bg-slate-900 dark:bg-white dark:text-slate-900 text-white text-xs font-bold hover:brightness-110 transition-all flex items-center gap-2"
@@ -1482,6 +1430,7 @@ const BusinessDashboard = () => {
                                     date: c.date,
                                     time: c.time,
                                     duration: c.duration || 60,
+                                    totalSelectedDuration: c.duration || 60,
                                     className: c.className,
                                     maxCapacity: c.maxCapacity
                                   });
@@ -1756,7 +1705,7 @@ const BusinessDashboard = () => {
           )}
 
           {/* ===== 승인 요청 탭 ===== */}
-          {activeTab === 'approval' && (
+          {activeTab === 'approvals' && (
             <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
               <div className="p-6 border-b border-slate-100 dark:border-slate-800">
                 <h3 className="text-lg font-bold">수강 신청 승인 대기</h3>
