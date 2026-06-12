@@ -261,21 +261,25 @@ const BusinessDashboard = () => {
             const gcalToken = sessionStorage.getItem('gcal_access_token');
             if (gcalToken) {
               const unsyncedRes = confirmed.filter((r: any) => !r.businessGoogleEventId && r.classDate && r.classTime);
-              for (const res of unsyncedRes) {
-                try {
-                  const eventId = await createGoogleEvent(gcalToken, {
-                    title: `[예약] ${res.userName} - ${res.className}`,
-                    startDateTime: formatDateTime(res.classDate, res.classTime),
-                    endDateTime: formatDateTime(res.classDate, res.classEndTime || res.classTime),
-                    description: `예약자: ${res.userName}\n수업: ${res.className}\n시간: ${res.classDuration || 60}분`
-                  });
-                  await updateDoc(doc(db, 'reservations', res.id), { businessGoogleEventId: eventId });
-                } catch (e: any) {
-                  if (e.message === 'EXPIRED_TOKEN') {
-                    console.warn('사업자 Google Calendar 토큰 만료');
-                    break;
+              if (unsyncedRes.length > 0) {
+                (async () => {
+                  for (const res of unsyncedRes as any[]) {
+                    try {
+                      const eventId = await createGoogleEvent(gcalToken, {
+                        title: `[예약] ${res.userName} - ${res.className}`,
+                        startDateTime: formatDateTime(res.classDate, res.classTime),
+                        endDateTime: formatDateTime(res.classDate, res.classEndTime || res.classTime),
+                        description: `예약자: ${res.userName}\n수업: ${res.className}\n시간: ${res.classDuration || 60}분`
+                      });
+                      await updateDoc(doc(db, 'reservations', res.id), { businessGoogleEventId: eventId });
+                    } catch (e: any) {
+                      if (e.message === 'EXPIRED_TOKEN') {
+                        console.warn('사업자 Google Calendar 토큰 만료');
+                        break;
+                      }
+                    }
                   }
-                }
+                })();
               }
             }
           } catch (e) { console.error("Res snap error:", e); }
