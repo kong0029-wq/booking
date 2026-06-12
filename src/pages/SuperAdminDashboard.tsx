@@ -270,7 +270,7 @@ const SuperAdminDashboard = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 space-y-4">
           <div className="flex items-center gap-3 pb-3 border-b border-slate-100"><span className="material-symbols-outlined text-emerald-600">info</span><h3 className="font-bold text-lg">시스템 정보</h3></div>
-          {[['앱 버전', 'v2.4.1'], ['프레임워크', 'React 19 + Vite'], ['데이터베이스', 'Firebase Firestore'], ['인증', 'Firebase Auth'], ['호스팅', 'Vercel']].map(([k, v], i) => (
+          {[['앱 버전', 'v2.4.1'], ['프레임워크', 'React 19 + Vite'], ['데이터베이스', 'Firebase Firestore'], ['인증', 'Firebase Auth'], ['호스팅', 'Firebase Hosting']].map(([k, v], i) => (
             <div key={i} className="flex justify-between text-sm"><span className="text-slate-500">{k}</span><span className="font-semibold text-slate-900">{v}</span></div>
           ))}
         </div>
