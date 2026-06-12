@@ -57,7 +57,8 @@ const BusinessDashboard = () => {
         maxCapacity: curr.maxCapacity,
         totalInstances: 1,
         totalCapacity: curr.currentCapacity || 0,
-        sampleDoc: curr // 수정/삭제 시 참조용
+        sampleDoc: curr, // 수정/삭제 시 참조용
+        classIds: [curr.id]
       });
     } else {
       const existing = acc.get(key);
@@ -66,6 +67,7 @@ const BusinessDashboard = () => {
       existing.times.add(curr.time);
       existing.totalInstances += 1;
       existing.totalCapacity += (curr.currentCapacity || 0);
+      existing.classIds.push(curr.id);
     }
     return acc;
   }, new Map()).values());
@@ -254,6 +256,28 @@ const BusinessDashboard = () => {
             
             // 회원 목록 업데이트 호출
             triggerFetchMembers(uniqueUids, confirmed, user.uid);
+
+            // 구글 캘린더 자동 동기화: 새 확정 예약 중 아직 사업자 캘린더에 등록 안 된 건 등록
+            const gcalToken = sessionStorage.getItem('gcal_access_token');
+            if (gcalToken) {
+              const unsyncedRes = confirmed.filter((r: any) => !r.businessGoogleEventId && r.classDate && r.classTime);
+              for (const res of unsyncedRes) {
+                try {
+                  const eventId = await createGoogleEvent(gcalToken, {
+                    title: `[예약] ${res.userName} - ${res.className}`,
+                    startDateTime: formatDateTime(res.classDate, res.classTime),
+                    endDateTime: formatDateTime(res.classDate, res.classEndTime || res.classTime),
+                    description: `예약자: ${res.userName}\n수업: ${res.className}\n시간: ${res.classDuration || 60}분`
+                  });
+                  await updateDoc(doc(db, 'reservations', res.id), { businessGoogleEventId: eventId });
+                } catch (e: any) {
+                  if (e.message === 'EXPIRED_TOKEN') {
+                    console.warn('사업자 Google Calendar 토큰 만료');
+                    break;
+                  }
+                }
+              }
+            }
           } catch (e) { console.error("Res snap error:", e); }
         });
 
@@ -454,26 +478,7 @@ const BusinessDashboard = () => {
               createdAt: serverTimestamp()
             };
 
-            const createWithGcal = async () => {
-              const gcalToken = sessionStorage.getItem('gcal_access_token');
-              if (gcalToken) {
-                try {
-                  const googleEventId = await createGoogleEvent(gcalToken, {
-                    title: classData.className,
-                    startDateTime: formatDateTime(classData.date, classData.time),
-                    endDateTime: formatDateTime(classData.date, classData.endTime)
-                  });
-                  classData.googleEventId = googleEventId;
-                } catch (e: any) {
-                  if (e.message === 'EXPIRED_TOKEN') {
-                    console.warn('Google Calendar Token Expired');
-                  }
-                }
-              }
-              return addDoc(collection(db, 'classes'), classData);
-            };
-
-            promises.push(createWithGcal());
+            promises.push(addDoc(collection(db, 'classes'), classData));
           }
         }
         await Promise.all(promises);
@@ -535,28 +540,35 @@ const BusinessDashboard = () => {
     }
   };
 
-  const startEditing = (cls: any, isSeries: boolean = false) => {
+  const startEditing = (data: any, isSeries: boolean = false) => {
     if (isSeries) {
-      alert('주간 캘린더 모드에서는 현재 단일 수업 수정만 지원합니다.');
+      setSelectedClassIds(data.classIds);
+      setBatchEditData({
+        className: data.className,
+        duration: data.duration,
+        maxCapacity: data.maxCapacity
+      });
+      setIsBatchEditModalOpen(true);
       return;
     }
 
-    setEditingClassId(cls.id);
+
+    setEditingClassId(data.id);
 
     // 해당 클래스의 날짜가 포함된 주로 캘린더 뷰 이동
-    const classDate = new Date(cls.date + 'T00:00:00');
+    const classDate = new Date(data.date + 'T00:00:00');
     const d = new Date(classDate);
     d.setHours(0, 0, 0, 0);
     d.setDate(d.getDate() - d.getDay()); // 해당 주의 일요일
     setCurrentWeekStart(d);
 
     setDraftEvent({
-      date: cls.date,
-      time: cls.time,
-      duration: cls.duration || 60,
-      totalSelectedDuration: cls.duration || 60,
-      className: cls.className,
-      maxCapacity: cls.maxCapacity
+      date: data.date,
+      time: data.time,
+      duration: data.duration || 60,
+      totalSelectedDuration: data.duration || 60,
+      className: data.className,
+      maxCapacity: data.maxCapacity
     });
 
     setActiveTab('classes');
@@ -603,6 +615,12 @@ const BusinessDashboard = () => {
     try {
       await updateDoc(doc(db, 'reservations', res.id), { status: 'REJECTED' });
       
+      // 사업자 구글 캘린더 이벤트 삭제
+      const gcalToken = sessionStorage.getItem('gcal_access_token');
+      if (gcalToken && res.businessGoogleEventId) {
+        try { await deleteGoogleEvent(gcalToken, res.businessGoogleEventId); } catch (e) { console.warn(e); }
+      }
+
       // [수정] 특정 수업 예약 건(classId 존재)일 때만 티켓 환불 처리
       if (res.classId) {
         const userRef = doc(db, 'users', res.uid);
@@ -1262,7 +1280,7 @@ const BusinessDashboard = () => {
                       </div>
                       <div className="flex gap-2 ml-4">
                         <button 
-                          onClick={() => startEditing(group.sampleDoc, true)}
+                          onClick={() => startEditing(group, true)}
                           className="w-10 h-10 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400 hover:text-primary hover:bg-primary/5 transition-all"
                           title="전체 수정"
                         >

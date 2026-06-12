@@ -11,7 +11,9 @@ import {
   doc,
   runTransaction
 } from 'firebase/firestore';
+import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { getHolidayName } from '../utils/holidays';
+import { deleteGoogleEvent } from '../utils/googleCalendar';
 
 const MyReservations = () => {
   const navigate = useNavigate();
@@ -22,6 +24,8 @@ const MyReservations = () => {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDayRes, setSelectedDayRes] = useState<any[] | null>(null);
   const [selectedDayText, setSelectedDayText] = useState<string>('');
+  const [gcalLinked, setGcalLinked] = useState(!!sessionStorage.getItem('user_gcal_access_token'));
+  const [gcalEmail, setGcalEmail] = useState(sessionStorage.getItem('user_gcal_email') || '');
 
   useEffect(() => {
     let unsubscribeSnap: (() => void) | undefined;
@@ -125,6 +129,17 @@ const MyReservations = () => {
           // 3. 예약 기록 삭제
           transaction.delete(resRef);
         });
+
+        // 구글 캘린더 이벤트 삭제
+        const gcalToken = sessionStorage.getItem('user_gcal_access_token');
+        if (gcalToken && res.googleEventId) {
+          try {
+            await deleteGoogleEvent(gcalToken, res.googleEventId);
+          } catch (e) {
+            console.warn('구글 캘린더 일정 삭제 실패:', e);
+          }
+        }
+
         alert('예약이 취소되었습니다.');
       } catch (err) {
         console.error('Cancellation error', err);
@@ -132,6 +147,37 @@ const MyReservations = () => {
       } finally {
         setCancellingId(null);
       }
+    }
+  };
+
+  // 구글 캘린더 연동
+  const handleGcalLink = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      provider.addScope('https://www.googleapis.com/auth/calendar.events');
+      const result = await signInWithPopup(auth, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        sessionStorage.setItem('user_gcal_access_token', credential.accessToken);
+        sessionStorage.setItem('user_gcal_email', result.user.email || '');
+        setGcalLinked(true);
+        setGcalEmail(result.user.email || '');
+        alert('구글 캘린더가 연동되었습니다! ✅\n이제부터 예약 시 자동으로 캘린더에 등록됩니다.');
+      }
+    } catch (err: any) {
+      console.error('Google Calendar link error:', err);
+      alert('구글 캘린더 연동 중 오류가 발생했습니다.');
+    }
+  };
+
+  const handleGcalUnlink = () => {
+    if (confirm('구글 캘린더 연동을 해제하시겠습니까?')) {
+      sessionStorage.removeItem('user_gcal_access_token');
+      sessionStorage.removeItem('user_gcal_email');
+      setGcalLinked(false);
+      setGcalEmail('');
+      alert('연동이 해제되었습니다.');
     }
   };
 
@@ -157,6 +203,46 @@ const MyReservations = () => {
           </button>
         </div>
       </nav>
+
+      {/* 구글 캘린더 연동 영역 */}
+      <div className="max-w-6xl mx-auto px-4 pt-6">
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${gcalLinked ? 'bg-emerald-50 dark:bg-emerald-900/20' : 'bg-slate-100 dark:bg-slate-700'}`}>
+              <span className={`material-symbols-outlined text-xl ${gcalLinked ? 'text-emerald-500' : 'text-slate-400'}`}>calendar_month</span>
+            </div>
+            <div>
+              <p className="text-sm font-bold text-slate-700 dark:text-slate-200">구글 캘린더 연동</p>
+              {gcalLinked ? (
+                <p className="text-xs text-emerald-500 font-medium flex items-center gap-1">
+                  <span className="material-symbols-outlined text-xs">check_circle</span>
+                  {gcalEmail} 연동됨
+                </p>
+              ) : (
+                <p className="text-xs text-slate-400">예약 완료 시 자동으로 구글 캘린더에 일정이 등록됩니다.</p>
+              )}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            {gcalLinked ? (
+              <button
+                onClick={handleGcalUnlink}
+                className="px-4 py-2 text-xs font-bold text-rose-500 bg-rose-50 dark:bg-rose-900/20 rounded-xl hover:bg-rose-100 transition-colors"
+              >
+                연동 해제
+              </button>
+            ) : (
+              <button
+                onClick={handleGcalLink}
+                className="px-4 py-2 text-xs font-bold text-white bg-blue-500 rounded-xl hover:bg-blue-600 transition-colors flex items-center gap-1.5 shadow-lg shadow-blue-500/20"
+              >
+                <span className="material-symbols-outlined text-sm">link</span>
+                구글 계정 연동하기
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
 
       <main className="max-w-6xl mx-auto px-4 py-8">
         {loading ? (

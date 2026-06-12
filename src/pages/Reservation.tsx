@@ -9,11 +9,13 @@ import {
   onSnapshot,
   doc,
   addDoc,
+  updateDoc,
   runTransaction,
   serverTimestamp,
   increment
 } from 'firebase/firestore';
 import { getHolidayName } from '../utils/holidays';
+import { createGoogleEvent, formatDateTime } from '../utils/googleCalendar';
 
 const Reservation = () => {
   const navigate = useNavigate();
@@ -316,6 +318,34 @@ const Reservation = () => {
       } catch (e) {
         console.error("Mail queue error:", e);
         // 메일 발송 실패가 예약 실패로 이어지지는 않도록 처리
+      }
+
+      // 구글 캘린더 연동: 유저가 연동해둔 경우 자동으로 캘린더에 일정 등록
+      const gcalToken = sessionStorage.getItem('user_gcal_access_token');
+      if (gcalToken) {
+        try {
+          const googleEventId = await createGoogleEvent(gcalToken, {
+            title: `[${selectedClass.businessName}] ${selectedClass.className}`,
+            startDateTime: formatDateTime(selectedClass.date, selectedClass.time),
+            endDateTime: formatDateTime(selectedClass.date, selectedClass.endTime),
+            description: `📍 ${selectedClass.businessName}\n⏱ ${selectedClass.duration || 60}분 수업\n\n예약 프로그램에서 자동 등록된 일정입니다.`
+          });
+          // 예약 문서에 구글 이벤트 ID 저장 (취소 시 삭제용)
+          const resQuery = query(
+            collection(db, 'reservations'),
+            where('uid', '==', user.uid),
+            where('classId', '==', selectedClass.id),
+            where('status', '==', 'CONFIRMED')
+          );
+          const resSnap = await new Promise<any>((resolve) => {
+            const unsub = onSnapshot(resQuery, (snap) => { unsub(); resolve(snap); });
+          });
+          if (!resSnap.empty) {
+            await updateDoc(resSnap.docs[0].ref, { googleEventId });
+          }
+        } catch (e: any) {
+          console.warn('Google Calendar 등록 실패 (세션 만료 가능):', e);
+        }
       }
 
       setSuccess(true);
